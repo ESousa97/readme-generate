@@ -1,0 +1,11 @@
+# requirements.txt
+google-generativeai
+python-docx
+PyMuPDF
+openpyxl
+reportlab>=3.6.0
+appdirs
+tqdm
+Pillow
+pandas
+customtkinter
