@@ -1,11 +1,28 @@
 # requirements.txt
-google-generativeai
-python-docx
-PyMuPDF
-openpyxl
-reportlab>=3.6.0
-appdirs
-tqdm
-Pillow
-pandas
-customtkinter
+# Dependências principais para o Gerador de README IA
+
+# Interface Gráfica PyQt5
+PyQt5>=5.15.0
+PyQtWebEngine>=5.15.0  # Para renderização web do markdown
+
+# Processamento de Markdown
+markdown>=3.4.0
+pygments>=2.12.0  # Para syntax highlighting
+
+# Detecção de tema do sistema
+darkdetect>=0.7.0
+
+# Ícones da interface
+qtawesome>=1.2.0
+
+# Cliente da API Google Gemini
+google-generativeai>=0.3.0
+
+# Utilitários
+requests>=2.28.0
+pathlib>=1.0.1
+
+# Opcional - para funcionalidades extras
+# reportlab>=3.6.0  # Para exportação PDF futura
+# weasyprint>=57.0  # Alternativa para PDF
+# pillow>=9.0.0     # Para processamento de imagens
