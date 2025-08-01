@@ -7,16 +7,29 @@
 APP_NAME = "GeradorREADME"
 APP_DISPLAY_NAME = "Gerador de README.md Inteligente"  # Display name usado na GUI
 APP_AUTHOR = "Enoquesousa"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
-# Modelo Gemini padrão para chamadas de IA
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-exp"
+# Modelo Gemini padrão para chamadas de IA - ATUALIZADO para versão mais estável
+DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
 
 # Arquivo de configuração para chaves e preferências
 CONFIG_FILE_NAME = "settings_readme_generator.ini"
 CONFIG_SECTION_API = "API_Gemini"
 CONFIG_KEY_API_KEY = "google_api_key"
 CONFIG_KEY_MODEL = "gemini_model"
+
+# Lista de modelos conhecidos e testados (em ordem de preferência)
+KNOWN_WORKING_MODELS = [
+    "gemini-1.5-flash",      # Mais rápido e econômico
+    "gemini-1.0-pro",        # Estável e confiável  
+    "gemini-1.5-pro",        # Mais poderoso
+    "gemini-2.0-flash-exp"   # Experimental
+]
+
+# Links úteis
+GOOGLE_AI_STUDIO_URL = "https://aistudio.google.com/app/apikey"
+GEMINI_PRICING_URL = "https://ai.google.dev/pricing"
+GEMINI_DOCS_URL = "https://ai.google.dev/docs"
 
 # ---------------------------------------------------------------------
 # PROMPTS HIPER-DETALHADOS PARA README.md - INTEGRADO COM GUI

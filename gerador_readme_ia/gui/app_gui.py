@@ -49,29 +49,26 @@ from ..gui.logic import (
 logger = setup_logging(f"{APP_NAME}.gui", debug=False)
 
 
-# ---------------------------------------------------------------------------
-# Main Window
-# ---------------------------------------------------------------------------
 class ReadmeGeneratorGUI(QMainWindow):
     """GUI principal."""
 
     def __init__(self) -> None:
         super().__init__()
 
-        # --------------------------------------------------------------
-        #               Estado / configurações persistentes
-        # --------------------------------------------------------------
+        # Estado / configurações persistentes
         self.config_mgr = ConfigManager()
-        self.api_key: Optional[str] = self.config_mgr.get_api_key()
+        self.api_key: Optional[str] = None  # Será carregada depois
         self.model_name: str = self.config_mgr.get_gemini_model() or DEFAULT_GEMINI_MODEL
         self.available_models: list[str] = []
         self.gemini_client: Optional[GeminiClient] = None
         self.zip_file_path: Optional[str] = None
         self.generated_readme: str = ""
+        
+        # Flags de estado
+        self._api_key_validated = False
+        self._models_loaded = False
 
-        # --------------------------------------------------------------
-        #               Qt Window basics
-        # --------------------------------------------------------------
+        # Qt Window basics
         self.setWindowTitle(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
         self.resize(1400, 900)
 
@@ -82,9 +79,7 @@ class ReadmeGeneratorGUI(QMainWindow):
         # Referências de thread
         self._threads: list = []
 
-        # --------------------------------------------------------------
-        #               Construção da UI (modular)
-        # --------------------------------------------------------------
+        # Construção da UI (modular)
         central = QWidget()
         self.setCentralWidget(central)
         self.main_layout = QVBoxLayout(central)
@@ -99,23 +94,17 @@ class ReadmeGeneratorGUI(QMainWindow):
 
         apply_theme(self, self.theme_name)
 
-        # --------------------------------------------------------------
-        #               Referências úteis de widgets
-        # --------------------------------------------------------------
+        # Referências úteis de widgets
         self._map_widgets()
         self._connect_signals()
+        
+        # Estado inicial - botão desabilitado até validação completa
         self._update_generate_button_state()
+        self._update_ui_status()
 
-        # Se já havia API Key salva, inicializa cliente
-        if self.api_key:
-            self._initialize_gemini_client()
-
-        # Verifica configs no background
+        # Carrega configuração no background
         QTimer.singleShot(150, self._start_initial_config_check)
 
-    # ------------------------------------------------------------------
-    # Widget mapping / signals
-    # ------------------------------------------------------------------
     def _map_widgets(self):
         lp = self.left_panel
         self.file_path_label = lp["file_path_label"]
@@ -149,9 +138,6 @@ class ReadmeGeneratorGUI(QMainWindow):
             self.settings_controls["custom_prompt_text"].setEnabled
         )
 
-    # ------------------------------------------------------------------
-    # Util
-    # ------------------------------------------------------------------
     @staticmethod
     def _detect_system_mode() -> str:
         try:
@@ -159,9 +145,6 @@ class ReadmeGeneratorGUI(QMainWindow):
         except Exception:
             return "light"
 
-    # ------------------------------------------------------------------
-    # Menu actions / simple slots
-    # ------------------------------------------------------------------
     def _select_zip_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -176,14 +159,30 @@ class ReadmeGeneratorGUI(QMainWindow):
             self._update_generate_button_state()
 
     def _prompt_api_key(self):
-        key, ok = QInputDialog.getText(self, "API Key", "Digite sua API Key:")
+        key, ok = QInputDialog.getText(
+            self, 
+            "API Key do Google Gemini", 
+            "Digite sua API Key do Google Gemini:\n(Obtenha em: https://aistudio.google.com/app/apikey)",
+            text=self.api_key or ""
+        )
         if ok and key.strip():
             self.api_key = key.strip()
             self.config_mgr.set_api_key(self.api_key)
-            self.console.append_step("API Key", "success", "Configurada")
-            self._initialize_gemini_client()
+            self.console.append_step("API Key", "progress", "Validando...")
+            self._api_key_validated = False
+            self._models_loaded = False
+            self._update_generate_button_state()
+            self._validate_api_key_async()
 
     def _prompt_model_name(self):
+        if not self._models_loaded or not self.available_models:
+            QMessageBox.warning(
+                self, 
+                "Modelos não carregados", 
+                "Configure uma API Key válida primeiro para carregar a lista de modelos."
+            )
+            return
+            
         if self.available_models:
             cur = 0
             try:
@@ -206,12 +205,438 @@ class ReadmeGeneratorGUI(QMainWindow):
             self.model_name = model
             self.model_label.setText(model)
             self.config_mgr.set_gemini_model(model)
+            self.console.append_step("Modelo", "success", model)
             if self.api_key:
                 self._initialize_gemini_client()
 
-    # ------------------------------------------------------------------
-    # Menu methods (ADICIONADOS)
-    # ------------------------------------------------------------------
+    def _validate_api_key_async(self):
+        """Valida a API Key em thread separada"""
+        if not self.api_key:
+            return
+            
+        th = run_in_thread(
+            self._validate_api_key_worker,
+            self.api_key,
+            callback_slot=self._api_key_validation_callback,
+            error_slot=self._api_key_validation_error,
+        )
+        self._threads.append(th)
+
+    def _validate_api_key_worker(self, progress_cb, step_cb, worker, api_key):
+        """Worker para validar API Key"""
+        try:
+            step_cb("API", "progress", "Configurando cliente...")
+            genai.configure(api_key=api_key)
+            
+            step_cb("Modelos", "progress", "Carregando lista...")
+            # Primeiro carrega lista de modelos disponíveis
+            try:
+                models_data = list(genai.list_models())
+            except Exception as e:
+                error_str = str(e).lower()
+                if "quota" in error_str or "429" in str(e):
+                    return {
+                        'valid': False, 
+                        'models': [],
+                        'quota_exceeded': True,
+                        'message': 'Quota da API excedida. Aguarde ou verifique seu plano de cobrança.'
+                    }
+                elif "403" in str(e):
+                    return {
+                        'valid': False, 
+                        'models': [],
+                        'quota_exceeded': False,
+                        'message': 'API Key sem permissões adequadas. Verifique se a chave tem acesso aos modelos Gemini.'
+                    }
+                raise
+            
+            available_models = []
+            working_models = []
+            
+            for model in models_data:
+                if hasattr(model, 'name'):
+                    model_name = model.name
+                    display_name = model_name.replace('models/', '') if model_name.startswith('models/') else model_name
+                    available_models.append(display_name)
+                    
+                    # Verificar se suporta generateContent
+                    if hasattr(model, 'supported_generation_methods'):
+                        if 'generateContent' in model.supported_generation_methods:
+                            working_models.append(model_name)
+                    else:
+                        working_models.append(model_name)
+            
+            if not available_models:
+                return {
+                    'valid': False, 
+                    'models': [],
+                    'quota_exceeded': False,
+                    'message': 'Nenhum modelo disponível encontrado para esta API Key'
+                }
+            
+            # Testar conexão com um modelo disponível
+            test_model = None
+            if working_models:
+                # Priorizar modelos conhecidos
+                preferred_models = ['models/gemini-1.5-flash', 'models/gemini-1.0-pro', 'models/gemini-1.5-pro']
+                for preferred in preferred_models:
+                    if preferred in working_models:
+                        test_model = preferred
+                        break
+                
+                if not test_model:
+                    test_model = working_models[0]
+            
+            if test_model:
+                step_cb("API", "progress", f"Testando conexão...")
+                try:
+                    model = genai.GenerativeModel(test_model)
+                    response = model.generate_content(
+                        "Hi", 
+                        generation_config=genai.types.GenerationConfig(
+                            max_output_tokens=5,
+                            temperature=0.1
+                        )
+                    )
+                    # Se chegou até aqui, API Key é válida
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "quota" in error_str or "429" in str(e):
+                        return {
+                            'valid': False, 
+                            'models': available_models,
+                            'quota_exceeded': True,
+                            'message': 'API Key válida, mas quota excedida. Aguarde ou atualize seu plano.'
+                        }
+                    elif "404" in str(e):
+                        # Modelo específico não encontrado, mas API Key pode ser válida
+                        pass
+                    else:
+                        raise
+            
+            return {
+                'valid': True, 
+                'models': available_models,
+                'working_models': working_models,
+                'quota_exceeded': False,
+                'message': 'API Key validada com sucesso'
+            }
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if "quota" in error_str or "429" in str(e):
+                return {
+                    'valid': False, 
+                    'models': [],
+                    'quota_exceeded': True,
+                    'message': 'Quota da API excedida. Verifique seu plano de cobrança no Google AI Studio.'
+                }
+            elif "403" in str(e):
+                return {
+                    'valid': False, 
+                    'models': [],
+                    'quota_exceeded': False,
+                    'message': 'API Key sem permissões adequadas ou inválida.'
+                }
+            elif "401" in str(e):
+                return {
+                    'valid': False, 
+                    'models': [],
+                    'quota_exceeded': False,
+                    'message': 'API Key inválida ou expirada.'
+                }
+            else:
+                return {
+                    'valid': False, 
+                    'models': [],
+                    'quota_exceeded': False,
+                    'message': f'Erro na validação: {str(e)}'
+                }
+
+    def _api_key_validation_callback(self, result):
+        """Callback para validação da API Key"""
+        if result['valid']:
+            self._api_key_validated = True
+            self.available_models = result['models']  # Nomes limpos para display
+            self._models_loaded = True
+            
+            self.console.append_step("API Key", "success", "Validada")
+            self.console.append_step("Modelos", "success", f"{len(self.available_models)} modelos carregados")
+            
+            # Verificar se o modelo atual está na lista
+            current_model = self.model_name
+            if current_model.startswith('models/'):
+                current_model = current_model.replace('models/', '')
+                
+            if current_model not in self.available_models:
+                # Usar primeiro modelo disponível se o atual não estiver na lista
+                if self.available_models:
+                    self.model_name = self.available_models[0]
+                    self.model_label.setText(self.model_name)
+                    self.config_mgr.set_gemini_model(self.model_name)
+                    self.console.append_step("Modelo", "info", f"Modelo alterado para {self.model_name}")
+            
+            # Inicializa o cliente Gemini
+            self._initialize_gemini_client()
+        else:
+            self._api_key_validated = False
+            self._models_loaded = False
+            self.available_models = []
+            self.gemini_client = None
+            
+            self.console.append_step("API Key", "error", "Problema na validação")
+            
+            # Tratamento especial para quota excedida
+            if result.get('quota_exceeded'):
+                self._show_quota_exceeded_dialog(result['message'])
+            else:
+                QMessageBox.critical(
+                    self, 
+                    "API Key Inválida", 
+                    f"Erro ao validar API Key:\n\n{result['message']}\n\nVerifique:\n• Se a chave está correta\n• Se você tem acesso aos modelos Gemini\n• Sua quota da API"
+                )
+        
+        self._update_generate_button_state()
+        self._update_ui_status()
+
+    def _show_quota_exceeded_dialog(self, message):
+        """Mostra diálogo específico para quota excedida"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Quota da API Excedida")
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setText("Sua quota da API Google Gemini foi excedida.")
+        msg_box.setDetailedText(message)
+        
+        detailed_info = """
+SOLUÇÕES POSSÍVEIS:
+
+1. AGUARDAR RENOVAÇÃO:
+   • Quotas gratuitas se renovam mensalmente
+   • Aguarde até o próximo ciclo de cobrança
+
+2. VERIFICAR SEU PLANO:
+   • Acesse: https://aistudio.google.com/app/apikey
+   • Verifique seus limites de uso
+   • Considere upgrader para plano pago
+
+3. QUOTA DIÁRIA:
+   • Se você tem quota diária, aguarde 24h
+   • Tente novamente amanhã
+
+4. GERENCIAR USO:
+   • Use o modelo com moderação
+   • Evite prompts muito longos
+   • Considere usar modelos menores como gemini-1.0-pro
+
+Para mais informações sobre limites e preços:
+https://ai.google.dev/pricing
+        """
+        
+        msg_box.setInformativeText(detailed_info)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec_()
+
+    def _api_key_validation_error(self, title, msg):
+        """Error callback para validação da API Key"""
+        self._api_key_validated = False
+        self._models_loaded = False
+        self.available_models = []
+        self.gemini_client = None
+        
+        self.console.append_step("API Key", "error", "Erro na validação")
+        self._update_generate_button_state()
+        self._update_ui_status()
+        
+        QMessageBox.critical(self, title, msg)
+
+    def _initialize_gemini_client(self):
+        """Cria GeminiClient após validação"""
+        if not self._api_key_validated or not self.api_key:
+            return
+            
+        try:
+            # Usar nome do modelo com prefixo models/ se necessário
+            model_name_for_client = self.model_name
+            if not model_name_for_client.startswith('models/'):
+                model_name_for_client = f'models/{model_name_for_client}'
+            
+            self.gemini_client = GeminiClient(self.api_key, model_name_for_client)
+            self.console.append_step("Cliente IA", "success", f"Inicializado com {self.model_name}")
+            self._update_generate_button_state()
+            self._update_ui_status()
+        except Exception as e:
+            logger.error("Erro ao inicializar GeminiClient", exc_info=True)
+            self.gemini_client = None
+            self.console.append_step("Cliente IA", "error", "Falha na inicialização")
+            
+            error_msg = str(e)
+            if "404" in error_msg:
+                error_msg = f"Modelo '{self.model_name}' não encontrado ou não suportado."
+            elif "403" in error_msg:
+                error_msg = "Sem permissões para usar este modelo."
+            
+            QMessageBox.critical(self, "Erro na IA", f"Erro ao inicializar cliente:\n{error_msg}")
+            self._update_generate_button_state()
+            self._update_ui_status()
+
+    def _update_generate_button_state(self):
+        """Atualiza estado do botão Gerar README"""
+        can_generate = (
+            self._api_key_validated and 
+            self._models_loaded and 
+            self.gemini_client is not None and 
+            bool(self.zip_file_path)
+        )
+        self.generate_btn.setEnabled(can_generate)
+        
+        if can_generate:
+            self.generate_btn.setText("Gerar README")
+        else:
+            reasons = []
+            if not self._api_key_validated:
+                reasons.append("API Key não validada")
+            if not self._models_loaded:
+                reasons.append("Modelos não carregados")
+            if not self.zip_file_path:
+                reasons.append("Arquivo ZIP não selecionado")
+            
+            tooltip = "Requisitos faltantes:\n• " + "\n• ".join(reasons)
+            self.generate_btn.setToolTip(tooltip)
+            self.generate_btn.setText("Gerar README (Indisponível)")
+
+    def _update_ui_status(self):
+        """Atualiza labels de status na UI"""
+        if self._api_key_validated and self.gemini_client:
+            self.api_status_label.setText(f"IA Pronta – {self.model_name}")
+            self.api_status_label.setStyleSheet(f"color: {self.theme.success};")
+        elif self.api_key:
+            self.api_status_label.setText("Validando API Key...")
+            self.api_status_label.setStyleSheet(f"color: {self.theme.warning};")
+        else:
+            self.api_status_label.setText("API Key não configurada")
+            self.api_status_label.setStyleSheet(f"color: {self.theme.error};")
+
+    def _get_advanced_config(self) -> Dict[str, object]:
+        sc = self.settings_controls
+        return {
+            "custom_prompt_enabled": sc["custom_prompt_enabled"].isChecked(),
+            "custom_prompt": sc["custom_prompt_text"].toPlainText(),
+            "include_tests": sc["include_tests"].isChecked(),
+            "include_docs": sc["include_docs"].isChecked(),
+            "include_config": sc["include_config"].isChecked(),
+            "max_file_size_kb": sc["max_file_size_spin"].value(),
+            "max_files": sc["max_files_spin"].value(),
+            "readme_style": sc["readme_style_combo"].currentText().lower(),
+            "include_badges": sc["include_badges"].isChecked(),
+            "include_toc": sc["include_toc"].isChecked(),
+            "include_examples": sc["include_examples"].isChecked(),
+        }
+
+    def _trigger_readme_generation(self):
+        """Inicia geração do README"""
+        # Validação dupla de segurança
+        if not self._api_key_validated or not self.gemini_client or not self.zip_file_path:
+            QMessageBox.warning(
+                self, 
+                "Geração não disponível", 
+                "Configure uma API Key válida e selecione um arquivo ZIP primeiro."
+            )
+            return
+            
+        cfg = self._get_advanced_config()
+        self.console.append_step("Geração", "progress", "Iniciando…")
+        self.progress_bar.setVisible(True)
+        self.progress_label.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.generate_btn.setEnabled(False)
+        self.generate_btn.setText("Gerando...")
+
+        th = run_in_thread(
+            self._generate_readme_worker,
+            self.zip_file_path,
+            cfg,
+            callback_slot=self._readme_generation_callback,
+            error_slot=self._readme_generation_error,
+        )
+        self._threads.append(th)
+
+    def _generate_readme_worker(self, progress_cb, step_cb, worker, zip_path, cfg):
+        """Worker para gerar README"""
+        try:
+            # 1) extrai dados
+            step_cb("Extração", "progress", "Analisando ZIP...")
+            progress_cb("Extraindo dados do projeto", 10)
+            project_data = extract_project_data_from_zip(
+                zip_path, cfg, progress_cb=progress_cb, step_cb=step_cb
+            )
+            
+            if worker.is_interruption_requested():
+                return None
+
+            # 2) monta prompt
+            step_cb("Prompt", "progress", "Preparando prompt...")
+            progress_cb("Montando prompt para IA", 70)
+            prompt = build_prompt(project_data, cfg)
+
+            # 3) IA
+            step_cb("IA", "progress", "Consultando Gemini…")
+            progress_cb("Gerando README com IA", 85)
+            
+            if not self.gemini_client:
+                raise Exception("Cliente Gemini não está disponível")
+                
+            response = self.gemini_client.send_conversational_prompt(prompt)
+            
+            step_cb("Finalização", "progress", "Processando resposta...")
+            progress_cb("Finalizando", 95)
+            readme = clean_readme_content(response or "")
+            
+            progress_cb("Concluído", 100)
+            return readme
+            
+        except Exception as e:
+            step_cb("Erro", "error", str(e))
+            raise
+
+    def _readme_generation_callback(self, readme_text: str):
+        """Callback para geração do README"""
+        self.progress_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+        self.generate_btn.setEnabled(True)
+        self.generate_btn.setText("Gerar README")
+        
+        if not readme_text:
+            self.console.append_step("README", "error", "IA retornou vazio")
+            QMessageBox.warning(self, "Falha", "A IA não retornou conteúdo.")
+            return
+            
+        self.generated_readme = readme_text
+        self.readme_preview.set_markdown_content(readme_text)
+        self.save_readme_btn.setEnabled(True)
+        self.preview_tabs.setCurrentIndex(0)  # Mostra aba de preview
+        self.console.append_step("README", "success", "Gerado com sucesso")
+
+    def _readme_generation_error(self, title, msg):
+        """Error callback para geração do README"""
+        self.progress_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+        self.generate_btn.setEnabled(True)
+        self.generate_btn.setText("Gerar README")
+        self.console.append_step("Erro", "error", title)
+        QMessageBox.critical(self, title, msg)
+
+    def _start_initial_config_check(self):
+        """Carrega configuração inicial"""
+        saved_api_key = self.config_mgr.get_api_key()
+        if saved_api_key:
+            self.api_key = saved_api_key
+            self.console.append_step("Configuração", "info", "API Key encontrada")
+            self._validate_api_key_async()
+        else:
+            self.console.append_step("Configuração", "info", "Configure uma API Key para começar")
+            self._update_ui_status()
+
+    # Menu methods
     def _save_readme(self):
         """Salva o README gerado em arquivo."""
         if not self.generated_readme:
@@ -318,9 +743,6 @@ class ReadmeGeneratorGUI(QMainWindow):
         """
         QMessageBox.information(self, "Ajuda", help_text)
 
-    # ------------------------------------------------------------------
-    # Theme helpers (called by menus)
-    # ------------------------------------------------------------------
     def _switch_theme(self, theme_name: str):
         if theme_name in THEMES:
             self.theme_name = theme_name
@@ -330,147 +752,8 @@ class ReadmeGeneratorGUI(QMainWindow):
     def _switch_theme_auto(self):
         self._switch_theme(self._detect_system_mode())
 
-    # ------------------------------------------------------------------
-    # Gemini
-    # ------------------------------------------------------------------
-    def _initialize_gemini_client(self):
-        """Cria GeminiClient e carrega modelos disponíveis."""
-        try:
-            self.gemini_client = GeminiClient(self.api_key, self.model_name)
-            self.api_status_label.setText(f"IA Pronta – {self.model_name}")
-            self.api_status_label.setStyleSheet(f"color: {self.theme.success};")
-            self.generate_btn.setEnabled(bool(self.zip_file_path))
-            self._load_available_models()
-        except Exception as e:
-            logger.error("Erro ao inicializar GeminiClient", exc_info=True)
-            self.gemini_client = None
-            self.api_status_label.setText("Erro na IA")
-            self.api_status_label.setStyleSheet(f"color: {self.theme.error};")
-            QMessageBox.critical(self, "Erro na IA", str(e))
-            self._update_generate_button_state()
-
-    def _load_available_models(self):
-        try:
-            data = genai.list_models()  # pode variar conforme lib
-            self.available_models = [getattr(m, "name", str(m)) for m in data]
-            if DEFAULT_GEMINI_MODEL not in self.available_models:
-                self.available_models.insert(0, DEFAULT_GEMINI_MODEL)
-        except Exception:
-            self.available_models = [DEFAULT_GEMINI_MODEL]
-
-    # ------------------------------------------------------------------
-    # Generate README flow
-    # ------------------------------------------------------------------
-    def _update_generate_button_state(self):
-        can = bool(self.gemini_client and self.zip_file_path)
-        self.generate_btn.setEnabled(can)
-
-    def _get_advanced_config(self) -> Dict[str, object]:
-        sc = self.settings_controls
-        return {
-            "custom_prompt_enabled": sc["custom_prompt_enabled"].isChecked(),
-            "custom_prompt": sc["custom_prompt_text"].toPlainText(),
-            "include_tests": sc["include_tests"].isChecked(),
-            "include_docs": sc["include_docs"].isChecked(),
-            "include_config": sc["include_config"].isChecked(),
-            "max_file_size_kb": sc["max_file_size_spin"].value(),
-            "max_files": sc["max_files_spin"].value(),
-            "readme_style": sc["readme_style_combo"].currentText().lower(),
-            "include_badges": sc["include_badges"].isChecked(),
-            "include_toc": sc["include_toc"].isChecked(),
-            "include_examples": sc["include_examples"].isChecked(),
-        }
-
-    # ---------- thread entry ----------
-    def _trigger_readme_generation(self):
-        if not self.gemini_client or not self.zip_file_path:
-            return
-        cfg = self._get_advanced_config()
-        self.console.append_step("Geração", "progress", "Iniciando…")
-        self.progress_bar.setVisible(True)
-        self.progress_label.setVisible(True)
-        self.progress_bar.setValue(0)
-        self.generate_btn.setEnabled(False)
-
-        th = run_in_thread(
-            self._generate_readme_worker,
-            self.zip_file_path,
-            cfg,
-            callback_slot=self._readme_generation_callback,
-            error_slot=self._readme_generation_error,
-        )
-        self._threads.append(th)
-
-    def _generate_readme_worker(self, progress_cb, step_cb, worker, zip_path, cfg):
-        # 1) extrai dados
-        project_data = extract_project_data_from_zip(
-            zip_path, cfg, progress_cb=progress_cb, step_cb=step_cb
-        )
-        if worker.is_interruption_requested():
-            return None
-
-        # 2) monta prompt
-        prompt = build_prompt(project_data, cfg)
-
-        # 3) IA
-        step_cb("IA", "progress", "Consultando Gemini…")
-        progress_cb("Gerando README…", 85)
-        response = self.gemini_client.send_conversational_prompt(prompt)
-        readme = clean_readme_content(response or "")
-        return readme
-
-    # ---------- callbacks ----------
-    def _readme_generation_callback(self, readme_text: str):
-        self.progress_bar.setVisible(False)
-        self.progress_label.setVisible(False)
-        self.generate_btn.setEnabled(True)
-        if not readme_text:
-            self.console.append_step("README", "error", "IA retornou vazio")
-            QMessageBox.warning(self, "Falha", "A IA não retornou conteúdo.")
-            return
-        self.generated_readme = readme_text
-        self.readme_preview.set_markdown_content(readme_text)
-        self.save_readme_btn.setEnabled(True)
-        self.preview_tabs.setCurrentIndex(0)
-        self.console.append_step("README", "success", "Gerado com sucesso")
-
-    def _readme_generation_error(self, title, msg):
-        self.progress_bar.setVisible(False)
-        self.progress_label.setVisible(False)
-        self.generate_btn.setEnabled(True)
-        self.console.append_step("Erro", "error", title)
-        QMessageBox.critical(self, title, msg)
-
-    # ------------------------------------------------------------------
-    # Initial config loader in background
-    # ------------------------------------------------------------------
-    def _start_initial_config_check(self):
-        th = run_in_thread(
-            self._check_initial_config_worker,
-            callback_slot=self._check_initial_config_callback,
-        )
-        self._threads.append(th)
-
-    def _check_initial_config_worker(self, progress_cb, step_cb, worker):
-        return {
-            "api_key": self.config_mgr.get_api_key(),
-            "model_name": self.config_mgr.get_gemini_model(),
-        }
-
-    def _check_initial_config_callback(self, res: Dict[str, str]):
-        if res.get("api_key"):
-            self.api_key = res["api_key"]
-            self.api_status_label.setText("API Key configurada ✔︎")
-        if res.get("model_name"):
-            self.model_name = res["model_name"]
-            self.model_label.setText(self.model_name)
-        if self.api_key:
-            self._initialize_gemini_client()
-
-    # ------------------------------------------------------------------
-    # Close event
-    # ------------------------------------------------------------------
     def closeEvent(self, evt):
+        """Cleanup ao fechar aplicação"""
         for th in self._threads:
             if th.isRunning():
                 th.quit()
@@ -483,10 +766,6 @@ class ReadmeGeneratorGUI(QMainWindow):
         super().closeEvent(evt)
 
 
-# ---------------------------------------------------------------------------
-# Stand-alone run
-# ---------------------------------------------------------------------------
-
 def main():
     app = QApplication(sys.argv)
     win = ReadmeGeneratorGUI()
@@ -496,3 +775,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
