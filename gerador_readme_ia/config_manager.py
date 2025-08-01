@@ -3,7 +3,7 @@ import configparser
 import os
 from appdirs import user_config_dir
 import logging
-from typing import Optional # <--- IMPORTAÇÃO ADICIONADA
+from typing import Optional
 
 from .constants import (
     APP_NAME, APP_AUTHOR, CONFIG_FILE_NAME,
@@ -49,7 +49,6 @@ class ConfigManager:
         if not self.config.has_section(CONFIG_SECTION_API):
             self.config.add_section(CONFIG_SECTION_API)
             logger.debug(f"Seção de configuração '{CONFIG_SECTION_API}' adicionada pois não existia.")
-
 
     def _save_config(self):
         try:

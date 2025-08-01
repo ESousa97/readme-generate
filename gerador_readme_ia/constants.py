@@ -10,7 +10,7 @@ APP_AUTHOR = "Enoquesousa"
 APP_VERSION = "1.0.1"
 
 # Modelo Gemini padrão para chamadas de IA
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-exp"
 
 # Arquivo de configuração para chaves e preferências
 CONFIG_FILE_NAME = "settings_readme_generator.ini"

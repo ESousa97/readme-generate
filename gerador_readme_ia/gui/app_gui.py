@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QTimer, Qt, QUrl
 from PyQt5.QtGui import QDesktopServices
 
-from ..constants import APP_NAME, APP_VERSION, DEFAULT_GEMINI_MODEL
+from ..constants import APP_NAME, APP_VERSION, APP_DISPLAY_NAME, DEFAULT_GEMINI_MODEL
 from ..config_manager import ConfigManager
 from ..ia_client.gemini_client import GeminiClient
 from ..logger_setup import setup_logging
@@ -47,7 +47,6 @@ from ..gui.logic import (
 )
 
 logger = setup_logging(f"{APP_NAME}.gui", debug=False)
-APP_DISPLAY_NAME = APP_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +143,7 @@ class ReadmeGeneratorGUI(QMainWindow):
         self.config_api_btn.clicked.connect(self._prompt_api_key)
         self.config_model_btn.clicked.connect(self._prompt_model_name)
         self.generate_btn.clicked.connect(self._trigger_readme_generation)
+        self.save_readme_btn.clicked.connect(self._save_readme)
         # Enable custom prompt box toggle
         self.settings_controls["custom_prompt_enabled"].toggled.connect(
             self.settings_controls["custom_prompt_text"].setEnabled
@@ -208,6 +208,115 @@ class ReadmeGeneratorGUI(QMainWindow):
             self.config_mgr.set_gemini_model(model)
             if self.api_key:
                 self._initialize_gemini_client()
+
+    # ------------------------------------------------------------------
+    # Menu methods (ADICIONADOS)
+    # ------------------------------------------------------------------
+    def _save_readme(self):
+        """Salva o README gerado em arquivo."""
+        if not self.generated_readme:
+            QMessageBox.warning(self, "Aviso", "Nenhum README foi gerado ainda.")
+            return
+        
+        default_name = "README.md"
+        if self.zip_file_path:
+            base_name = os.path.splitext(os.path.basename(self.zip_file_path))[0]
+            default_name = f"{base_name}_README.md"
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Salvar README", default_name, "Markdown (*.md);;Todos os arquivos (*)"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.generated_readme)
+                QMessageBox.information(self, "Sucesso", f"README salvo em:\n{file_path}")
+                self.console.append_step("Arquivo", "success", f"Salvo: {os.path.basename(file_path)}")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao salvar arquivo:\n{e}")
+                self.console.append_step("Arquivo", "error", f"Erro ao salvar: {e}")
+
+    def _export_markdown(self):
+        """Exporta como Markdown."""
+        self._save_readme()
+
+    def _export_html(self):
+        """Exporta como HTML."""
+        if not self.generated_readme:
+            QMessageBox.warning(self, "Aviso", "Nenhum README foi gerado ainda.")
+            return
+        
+        default_name = "README.html"
+        if self.zip_file_path:
+            base_name = os.path.splitext(os.path.basename(self.zip_file_path))[0]
+            default_name = f"{base_name}_README.html"
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar como HTML", default_name, "HTML (*.html);;Todos os arquivos (*)"
+        )
+        
+        if file_path:
+            try:
+                html_content = self.readme_preview.markdown_renderer.render_to_html(self.generated_readme)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                QMessageBox.information(self, "Sucesso", f"HTML exportado para:\n{file_path}")
+                self.console.append_step("Export", "success", f"HTML: {os.path.basename(file_path)}")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao exportar HTML:\n{e}")
+                self.console.append_step("Export", "error", f"Erro HTML: {e}")
+
+    def _export_pdf(self):
+        """Exporta como PDF."""
+        QMessageBox.information(self, "Funcionalidade", 
+                               "Exportação para PDF será implementada em versão futura.\n"
+                               "Por enquanto, use 'Exportar HTML' e imprima como PDF no navegador.")
+
+    def _copy_readme(self):
+        """Copia o README para a área de transferência."""
+        if not self.generated_readme:
+            QMessageBox.warning(self, "Aviso", "Nenhum README foi gerado ainda.")
+            return
+        
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.generated_readme)
+        QMessageBox.information(self, "Copiado", "README copiado para a área de transferência!")
+        self.console.append_step("Clipboard", "success", "README copiado")
+
+    def _show_about(self):
+        """Mostra informações sobre o aplicativo."""
+        about_text = f"""
+        <h2>{APP_DISPLAY_NAME}</h2>
+        <p><b>Versão:</b> {APP_VERSION}</p>
+        <p><b>Descrição:</b> Gerador inteligente de documentação README.md usando IA</p>
+        <p><b>Tecnologias:</b> Python, PyQt5, Google Gemini AI</p>
+        <p><b>Autor:</b> Desenvolvido com ❤️ para a comunidade</p>
+        <hr>
+        <p><small>Este software utiliza a API do Google Gemini para gerar documentação inteligente e profissional.</small></p>
+        """
+        QMessageBox.about(self, f"Sobre - {APP_DISPLAY_NAME}", about_text)
+
+    def _show_help(self):
+        """Mostra ajuda do aplicativo."""
+        help_text = """
+        <h3>Como usar o Gerador de README IA:</h3>
+        <ol>
+        <li><b>Configure sua API Key:</b> Vá em Configurações → Configurar API Key</li>
+        <li><b>Selecione um arquivo ZIP:</b> Use o botão "Selecionar Arquivo ZIP"</li>
+        <li><b>Ajuste as configurações:</b> Na aba "Configurações Avançadas"</li>
+        <li><b>Gere o README:</b> Clique em "Gerar README"</li>
+        <li><b>Salve o resultado:</b> Use "Salvar README" ou Ctrl+S</li>
+        </ol>
+        
+        <h4>Dicas:</h4>
+        <ul>
+        <li>O ZIP deve conter o código-fonte do seu projeto</li>
+        <li>Arquivos muito grandes são truncados automaticamente</li>
+        <li>Use prompts personalizados para necessidades específicas</li>
+        </ul>
+        """
+        QMessageBox.information(self, "Ajuda", help_text)
 
     # ------------------------------------------------------------------
     # Theme helpers (called by menus)

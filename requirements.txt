@@ -18,6 +18,9 @@ qtawesome>=1.2.0
 # Cliente da API Google Gemini
 google-generativeai>=0.3.0
 
+# Diretórios de configuração e logs
+appdirs>=1.4.4
+
 # Utilitários
 requests>=2.28.0
 pathlib>=1.0.1
