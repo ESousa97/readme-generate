@@ -6,15 +6,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def run_in_thread(func, *args, callback_slot=None, error_slot=None, timeout_ms=120000, **kwargs):
+def run_in_thread(func, *args, callback_slot=None, error_slot=None, 
+                  progress_slot=None, step_slot=None, timeout_ms=120000, **kwargs):
     """
-    Executa uma função em thread separada com timeout opcional
+    Executa uma função em thread separada com timeout opcional e callbacks de progresso
     
     Args:
         func: Função a ser executada
         *args: Argumentos posicionais para a função
         callback_slot: Slot para receber o resultado (success)
         error_slot: Slot para receber erros
+        progress_slot: Slot para receber updates de progresso (message, percentage)
+        step_slot: Slot para receber updates de step (step_name, status, details)
         timeout_ms: Timeout em milissegundos (padrão: 2 minutos)
         **kwargs: Argumentos nomeados para a função
     
@@ -39,6 +42,15 @@ def run_in_thread(func, *args, callback_slot=None, error_slot=None, timeout_ms=1
     else:
         # Handler genérico de erro
         worker.error.connect(lambda title, msg: logger.error(f"Worker error - {title}: {msg}"))
+
+    # *** NOVA FUNCIONALIDADE: Conectar callbacks de progresso ***
+    if progress_slot:
+        worker.progress.connect(progress_slot)
+        logger.debug("Progress callback conectado")
+
+    if step_slot:
+        worker.step_update.connect(step_slot)
+        logger.debug("Step callback conectado")
 
     # Configurar timeout se especificado
     timeout_timer = None
@@ -95,13 +107,15 @@ class ThreadManager:
         self.active_threads = []
         
     def start_thread(self, func, *args, callback_slot=None, error_slot=None, 
-                    timeout_ms=120000, **kwargs):
+                    progress_slot=None, step_slot=None, timeout_ms=120000, **kwargs):
         """Inicia uma nova thread e a registra no gerenciador"""
         
         thread = run_in_thread(
             func, *args, 
             callback_slot=callback_slot,
             error_slot=error_slot,
+            progress_slot=progress_slot,
+            step_slot=step_slot,
             timeout_ms=timeout_ms,
             **kwargs
         )
@@ -138,3 +152,4 @@ class ThreadManager:
     def get_active_count(self):
         """Retorna número de threads ativas"""
         return len(self.active_threads)
+    

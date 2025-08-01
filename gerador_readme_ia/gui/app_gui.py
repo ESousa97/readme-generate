@@ -1,6 +1,6 @@
 # gerador_readme_ia/gui/app_gui.py
 """Janela principal da aplicação.
-Corrigido: fluxo completo de geração de README + integração com logic.py + tratamento de quota
+Corrigido: fluxo completo de geração de README + integração com logic.py + tratamento de quota + PROGRESS BAR FUNCIONAL
 """
 from __future__ import annotations
 
@@ -574,6 +574,28 @@ O que você gostaria de fazer?
             "include_examples": sc["include_examples"].isChecked(),
         }
 
+    # ============================================================================
+    # PROGRESS BAR CALLBACKS - NOVA IMPLEMENTAÇÃO FUNCIONAL
+    # ============================================================================
+    
+    def _update_progress(self, message: str, value: int):
+        """Callback para atualizar a barra de progresso"""
+        logger.debug(f"Progress update: {message} - {value}%")
+        
+        # Atualizar a barra de progresso
+        self.progress_bar.setValue(value)
+        
+        # Atualizar o label de progresso
+        self.progress_label.setText(message)
+        
+        # Forçar atualização da UI
+        QApplication.processEvents()
+
+    def _update_step(self, step_name: str, status: str, details: str = ""):
+        """Callback para atualizar steps no console"""
+        logger.debug(f"Step update: {step_name} - {status} - {details}")
+        self.console.append_step(step_name, status, details)
+
     def _trigger_readme_generation(self):
         """Inicia geração do README"""
         # Validação dupla de segurança
@@ -586,19 +608,26 @@ O que você gostaria de fazer?
             return
             
         cfg = self._get_advanced_config()
-        self.console.append_step("Geração", "progress", "Iniciando…")
-        self.progress_bar.setVisible(True)
-        self.progress_label.setVisible(True)
+        
+        # Reset e show progress
         self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.progress_label.setText("Preparando...")
+        self.progress_label.setVisible(True)
+        
+        self.console.append_step("Geração", "progress", "Iniciando…")
         self.generate_btn.setEnabled(False)
         self.generate_btn.setText("Gerando...")
 
+        # *** CORREÇÃO PRINCIPAL: Conectar callbacks de progresso ***
         th = run_in_thread(
             self._generate_readme_worker,
             self.zip_file_path,
             cfg,
             callback_slot=self._readme_generation_callback,
             error_slot=self._readme_generation_error,
+            progress_slot=self._update_progress,  # NOVO: conectar callback de progresso
+            step_slot=self._update_step,          # NOVO: conectar callback de step
         )
         self._threads.append(th)
 
@@ -836,3 +865,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
