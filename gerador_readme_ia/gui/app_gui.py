@@ -1,6 +1,6 @@
 # gerador_readme_ia/gui/app_gui.py
 """Janela principal da aplicação.
-Corrigido: fluxo completo de geração de README + integração com logic.py
+Corrigido: fluxo completo de geração de README + integração com logic.py + tratamento de quota
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from PyQt5.QtGui import QDesktopServices
 
 from ..constants import APP_NAME, APP_VERSION, APP_DISPLAY_NAME, DEFAULT_GEMINI_MODEL
 from ..config_manager import ConfigManager
-from ..ia_client.gemini_client import GeminiClient
+from ..ia_client.gemini_client import GeminiClient, QuotaExceededException
 from ..logger_setup import setup_logging
 
 from .theme import THEMES
@@ -436,6 +436,39 @@ https://ai.google.dev/pricing
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec_()
 
+    def _show_quota_model_selection_dialog(self, current_model):
+        """Mostra diálogo específico para quota excedida com sugestão de troca de modelo"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Quota Excedida - Trocar Modelo?")
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setText(f"A quota do modelo '{current_model}' foi excedida.")
+        
+        detailed_info = f"""
+MODELO ATUAL: {current_model}
+STATUS: Quota excedida
+
+SUGESTÕES:
+• Experimente outro modelo (gemini-1.0-pro, gemini-1.5-flash)  
+• Aguarde a renovação da quota
+• Verifique seus limites no Google AI Studio
+
+O que você gostaria de fazer?
+        """
+        
+        msg_box.setInformativeText(detailed_info)
+        
+        # Botões customizados
+        change_model_btn = msg_box.addButton("Trocar Modelo", QMessageBox.AcceptRole)
+        wait_btn = msg_box.addButton("Aguardar", QMessageBox.RejectRole)
+        
+        msg_box.setDefaultButton(change_model_btn)
+        
+        result = msg_box.exec_()
+        
+        # Se usuário escolheu trocar modelo
+        if msg_box.clickedButton() == change_model_btn:
+            self._prompt_model_name()
+
     def _api_key_validation_error(self, title, msg):
         """Error callback para validação da API Key"""
         self._api_key_validated = False
@@ -462,6 +495,15 @@ https://ai.google.dev/pricing
             
             self.gemini_client = GeminiClient(self.api_key, model_name_for_client)
             self.console.append_step("Cliente IA", "success", f"Inicializado com {self.model_name}")
+            self._update_generate_button_state()
+            self._update_ui_status()
+        except QuotaExceededException as e:
+            logger.error("Quota excedida ao inicializar GeminiClient", exc_info=True)
+            self.gemini_client = None
+            self.console.append_step("Cliente IA", "error", f"Quota excedida: {e.model_name}")
+            
+            # Mostrar diálogo específico para quota com sugestão de mudança de modelo
+            self._show_quota_model_selection_dialog(e.model_name)
             self._update_generate_button_state()
             self._update_ui_status()
         except Exception as e:
@@ -594,6 +636,9 @@ https://ai.google.dev/pricing
             progress_cb("Concluído", 100)
             return readme
             
+        except QuotaExceededException as e:
+            step_cb("Quota", "error", f"Limite excedido: {e.model_name}")
+            raise Exception(f"Quota excedida para o modelo '{e.model_name}'. Tente outro modelo ou aguarde a renovação da quota.")
         except Exception as e:
             step_cb("Erro", "error", str(e))
             raise
@@ -622,8 +667,23 @@ https://ai.google.dev/pricing
         self.progress_label.setVisible(False)
         self.generate_btn.setEnabled(True)
         self.generate_btn.setText("Gerar README")
-        self.console.append_step("Erro", "error", title)
-        QMessageBox.critical(self, title, msg)
+        
+        # Verificar se é erro de quota
+        if "quota" in msg.lower() or "429" in msg:
+            self.console.append_step("Quota", "error", "Limite excedido")
+            
+            # Extrair nome do modelo da mensagem se possível
+            model_name = self.model_name
+            if "modelo '" in msg:
+                try:
+                    model_name = msg.split("modelo '")[1].split("'")[0]
+                except:
+                    pass
+            
+            self._show_quota_model_selection_dialog(model_name)
+        else:
+            self.console.append_step("Erro", "error", title)
+            QMessageBox.critical(self, title, msg)
 
     def _start_initial_config_check(self):
         """Carrega configuração inicial"""
@@ -739,6 +799,7 @@ https://ai.google.dev/pricing
         <li>O ZIP deve conter o código-fonte do seu projeto</li>
         <li>Arquivos muito grandes são truncados automaticamente</li>
         <li>Use prompts personalizados para necessidades específicas</li>
+        <li>Se a quota for excedida, tente outro modelo</li>
         </ul>
         """
         QMessageBox.information(self, "Ajuda", help_text)
@@ -775,4 +836,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

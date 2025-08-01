@@ -7,6 +7,12 @@ from ..constants import APP_NAME
 
 logger = logging.getLogger(f"{APP_NAME}.gemini_client")
 
+class QuotaExceededException(Exception):
+    """Exceção específica para quota excedida"""
+    def __init__(self, message, model_name=None):
+        self.model_name = model_name
+        super().__init__(message)
+
 class GeminiClient:
     def __init__(self, api_key: str, model_name: str):
         logger.info(f">>> GeminiClient __init__: Iniciando com modelo '{model_name}' e API Key fornecida.")
@@ -45,6 +51,13 @@ class GeminiClient:
                     raise ValueError(f"Modelo '{model_name}' não encontrado ou não suporta generateContent")
                     
             except Exception as e:
+                error_str = str(e).lower()
+                if "quota" in error_str or "429" in str(e):
+                    display_name = model_name.replace('models/', '')
+                    raise QuotaExceededException(
+                        f"Quota excedida para o modelo '{display_name}'. Tente outro modelo ou aguarde.",
+                        display_name
+                    )
                 logger.warning(f"Não foi possível verificar disponibilidade do modelo: {e}")
                 # Continuar mesmo assim, deixar a API decidir
             
@@ -64,12 +77,21 @@ class GeminiClient:
             self.model_name = model_name
             self.api_key = api_key
             
+        except QuotaExceededException:
+            # Re-propagar sem modificar
+            raise
         except Exception as e:
             logger.error(f">>> GeminiClient __init__: EXCEÇÃO CRÍTICA durante a inicialização do modelo '{model_name}': {type(e).__name__} - {e}", exc_info=True)
             
             # Mensagem de erro mais específica
             error_msg = str(e)
-            if "404" in error_msg or "not found" in error_msg.lower():
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                display_name = model_name.replace('models/', '')
+                raise QuotaExceededException(
+                    f"Quota excedida para o modelo '{display_name}'. Tente outro modelo ou aguarde.",
+                    display_name
+                )
+            elif "404" in error_msg or "not found" in error_msg.lower():
                 raise ConnectionError(f"Modelo '{model_name}' não encontrado. Verifique se você tem acesso a este modelo com sua API Key.") from e
             elif "403" in error_msg or "permission" in error_msg.lower():
                 raise ConnectionError(f"Sem permissão para usar o modelo '{model_name}'. Verifique sua API Key e quota.") from e
@@ -134,6 +156,13 @@ class GeminiClient:
             return None
             
         except Exception as e:
+            error_msg = str(e)
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                display_name = self.model_name.replace('models/', '')
+                raise QuotaExceededException(
+                    f"Quota excedida para o modelo '{display_name}'. Tente outro modelo ou aguarde.",
+                    display_name
+                )
             logger.error(f"Erro durante chamada à API Gemini (modelo {self.model_name}): {type(e).__name__} - {e}", exc_info=True)
             raise
 
@@ -184,10 +213,16 @@ class GeminiClient:
                 return True
                 
         except Exception as e:
+            error_msg = str(e)
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                display_name = self.model_name.replace('models/', '')
+                raise QuotaExceededException(
+                    f"Quota excedida para o modelo '{display_name}'. Tente outro modelo ou aguarde.",
+                    display_name
+                )
             logger.error(f">>> GeminiClient test_connection: EXCEÇÃO CRÍTICA no teste: {type(e).__name__} - {e}", exc_info=True)
             
             # Re-processar erro para mensagem mais clara
-            error_msg = str(e)
             if "404" in error_msg:
                 raise ConnectionError(f"Modelo '{self.model_name}' não encontrado ou não acessível") from e
             elif "403" in error_msg:
