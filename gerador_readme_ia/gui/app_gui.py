@@ -1,46 +1,30 @@
 # gerador_readme_ia/gui/app_gui.py
-"""Janela principal da aplicação.
-Corrigido: fluxo completo de geração de README + integração com logic.py + tratamento de quota + PROGRESS BAR FUNCIONAL
+"""
+Interface principal modernizada com CustomTkinter estilo Windows 11
 """
 from __future__ import annotations
 
 import os
 import sys
 import logging
+import threading
+import tkinter as tk
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
+from tkinter import filedialog, messagebox
 
+import customtkinter as ctk
 import darkdetect
 import google.generativeai as genai
-
-from PyQt5.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QFileDialog,
-    QMessageBox,
-    QInputDialog,
-)
-from PyQt5.QtCore import QTimer, Qt, QUrl
-from PyQt5.QtGui import QDesktopServices
 
 from ..constants import APP_NAME, APP_VERSION, APP_DISPLAY_NAME, DEFAULT_GEMINI_MODEL
 from ..config_manager import ConfigManager
 from ..ia_client.gemini_client import GeminiClient, QuotaExceededException
 from ..logger_setup import setup_logging
 
-from .theme import THEMES
-from .ui_header import create_header
-from .ui_left_panel import create_left_panel
-from .ui_right_panel import create_right_panel
-from .ui_controls import create_controls
-from .menus import create_menus
-from .theme_manager import apply_theme
-from .worker_manager import run_in_thread
-from .widgets import ConsoleWidget, StepIndicator
-
-from ..gui.logic import (
+from .ctk_theme_manager import theme_manager
+from .ctk_widgets import *
+from .logic import (
     build_prompt,
     extract_project_data_from_zip,
     clean_readme_content,
@@ -49,672 +33,894 @@ from ..gui.logic import (
 logger = setup_logging(f"{APP_NAME}.gui", debug=False)
 
 
-class ReadmeGeneratorGUI(QMainWindow):
-    """GUI principal."""
+class ReadmeGeneratorApp(ctk.CTk):
+    """Interface principal modernizada com CustomTkinter"""
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
 
-        # Estado / configurações persistentes
+        # Configurações iniciais
+        self.title(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
+        self.geometry("1400x900")
+        self.minsize(1200, 700)
+        
+        # Configurar ícone se disponível
+        try:
+            icon_path = Path(__file__).parent.parent / "assets" / "icon.ico"
+            if icon_path.exists():
+                self.iconbitmap(str(icon_path))
+        except:
+            pass
+
+        # Estado da aplicação
         self.config_mgr = ConfigManager()
-        self.api_key: Optional[str] = None  # Será carregada depois
+        self.api_key: Optional[str] = None
         self.model_name: str = self.config_mgr.get_gemini_model() or DEFAULT_GEMINI_MODEL
         self.available_models: list[str] = []
         self.gemini_client: Optional[GeminiClient] = None
         self.zip_file_path: Optional[str] = None
         self.generated_readme: str = ""
         
-        # Flags de estado
+        # Estados de validação
         self._api_key_validated = False
         self._models_loaded = False
-
-        # Qt Window basics
-        self.setWindowTitle(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
-        self.resize(1400, 900)
-
-        # Tema
-        self.theme_name = self._detect_system_mode()
-        self.theme = THEMES[self.theme_name]
-
-        # Referências de thread
-        self._threads: list = []
-
-        # Construção da UI (modular)
-        central = QWidget()
-        self.setCentralWidget(central)
-        self.main_layout = QVBoxLayout(central)
-        self.main_layout.setContentsMargins(20, 20, 20, 20)
-        self.main_layout.setSpacing(15)
-
-        create_header(self.main_layout)
-        self.left_panel = create_left_panel(self.main_layout)
-        self.right_panel = create_right_panel(self.main_layout, self.theme)
-        self.controls = create_controls(self.main_layout)
-        create_menus(self)
-
-        apply_theme(self, self.theme_name)
-
-        # Referências úteis de widgets
-        self._map_widgets()
-        self._connect_signals()
         
-        # Estado inicial - botão desabilitado até validação completa
-        self._update_generate_button_state()
-        self._update_ui_status()
+        # Controle de threads
+        self._active_threads: list = []
 
-        # Carrega configuração no background
-        QTimer.singleShot(150, self._start_initial_config_check)
+        # Interface
+        self._setup_ui()
+        self._load_initial_config()
 
-    def _map_widgets(self):
-        lp = self.left_panel
-        self.file_path_label = lp["file_path_label"]
-        self.select_file_btn = lp["select_file_btn"]
-        self.api_status_label = lp["api_status_label"]
-        self.model_label = lp["model_label"]
-        self.config_api_btn = lp["config_api_btn"]
-        self.config_model_btn = lp["config_model_btn"]
-        self.console: ConsoleWidget = lp["console"]
+        # Bind do fechamento
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-        rp = self.right_panel
-        self.preview_tabs = rp["preview_tabs"]
-        self.readme_preview = rp["readme_preview"]
-        self.settings_controls = rp["settings_controls"]
+    def _setup_ui(self):
+        """Configura a interface principal"""
+        # Layout principal em grid
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+        
+        # Header
+        self._create_header()
+        
+        # Conteúdo principal
+        self._create_main_content()
+        
+        # Footer com controles
+        self._create_footer()
 
-        cw = self.controls
-        self.progress_frame = cw["progress_frame"]
-        self.progress_bar = cw["progress_bar"]
-        self.progress_label = cw["progress_label"]
-        self.save_readme_btn = cw["save_readme_btn"]
-        self.generate_btn = cw["generate_btn"]
-
-    def _connect_signals(self):
-        self.select_file_btn.clicked.connect(self._select_zip_file)
-        self.config_api_btn.clicked.connect(self._prompt_api_key)
-        self.config_model_btn.clicked.connect(self._prompt_model_name)
-        self.generate_btn.clicked.connect(self._trigger_readme_generation)
-        self.save_readme_btn.clicked.connect(self._save_readme)
-        # Enable custom prompt box toggle
-        self.settings_controls["custom_prompt_enabled"].toggled.connect(
-            self.settings_controls["custom_prompt_text"].setEnabled
+    def _create_header(self):
+        """Cria o cabeçalho da aplicação"""
+        header_frame = ModernFrame(self, corner_radius=0, height=80)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+        header_frame.grid_columnconfigure(1, weight=1)
+        
+        # Ícone e título
+        icon_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        icon_frame.grid(row=0, column=0, sticky="w", padx=20, pady=20)
+        
+        # Ícone placeholder (você pode substituir por um ícone real)
+        icon_label = ctk.CTkLabel(
+            icon_frame, 
+            text="🤖", 
+            font=ctk.CTkFont(size=32)
         )
+        icon_label.pack(side="left", padx=(0, 15))
+        
+        # Título e subtítulo
+        title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_frame.grid(row=0, column=1, sticky="w", pady=20)
+        
+        title_label = ctk.CTkLabel(
+            title_frame,
+            text=APP_DISPLAY_NAME,
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color=theme_manager.get_color("text_primary")
+        )
+        title_label.pack(anchor="w")
+        
+        subtitle_label = ctk.CTkLabel(
+            title_frame,
+            text="Gere documentações profissionais automaticamente com IA",
+            font=ctk.CTkFont(size=12),
+            text_color=theme_manager.get_color("text_secondary")
+        )
+        subtitle_label.pack(anchor="w")
+        
+        # Controles do tema
+        theme_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        theme_frame.grid(row=0, column=2, sticky="e", padx=20, pady=20)
+        
+        self.theme_switch = ctk.CTkSwitch(
+            theme_frame,
+            text="Tema Escuro",
+            command=self._toggle_theme,
+            width=100
+        )
+        self.theme_switch.pack()
+        
+        # Definir estado inicial do switch
+        if theme_manager.current_theme == "dark":
+            self.theme_switch.select()
 
-    @staticmethod
-    def _detect_system_mode() -> str:
-        try:
-            return "dark" if (darkdetect.theme() or "").lower() == "dark" else "light"
-        except Exception:
-            return "light"
+    def _create_main_content(self):
+        """Cria o conteúdo principal"""
+        main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        main_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        main_frame.grid_columnconfigure(1, weight=2)  # Área de preview maior
+        main_frame.grid_rowconfigure(0, weight=1)
+        
+        # Painel esquerdo
+        self._create_left_panel(main_frame)
+        
+        # Painel direito
+        self._create_right_panel(main_frame)
+
+    def _create_left_panel(self, parent):
+        """Cria o painel esquerdo com controles"""
+        left_frame = ModernFrame(parent, width=380)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        left_frame.grid_columnconfigure(0, weight=1)
+        
+        # Seção do arquivo
+        file_section = self._create_file_section(left_frame)
+        file_section.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        
+        # Seção de configuração
+        config_section = self._create_config_section(left_frame)
+        config_section.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+        
+        # Console compacto
+        console_section = self._create_console_section(left_frame)
+        console_section.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        left_frame.grid_rowconfigure(2, weight=1)
+
+    def _create_file_section(self, parent):
+        """Seção de seleção de arquivo"""
+        section = ModernSection(parent, title="Arquivo do Projeto")
+        
+        # Path do arquivo
+        self.file_path_var = tk.StringVar(value="Nenhum arquivo selecionado")
+        path_label = ctk.CTkLabel(
+            section.content_frame,
+            textvariable=self.file_path_var,
+            font=ctk.CTkFont(size=11),
+            text_color=theme_manager.get_color("text_secondary"),
+            wraplength=320
+        )
+        path_label.pack(fill="x", pady=(0, 10))
+        
+        # Botão de seleção
+        self.select_file_btn = ModernButton(
+            section.content_frame,
+            text="Selecionar Arquivo ZIP",
+            command=self._select_zip_file,
+            width=300,
+            height=40
+        )
+        self.select_file_btn.pack(fill="x")
+        
+        return section
+
+    def _create_config_section(self, parent):
+        """Seção de configuração da IA"""
+        section = ModernSection(parent, title="Configuração da IA")
+        
+        # Status da API
+        status_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        status_frame.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkLabel(
+            status_frame,
+            text="Status:",
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).pack(anchor="w")
+        
+        self.api_status_var = tk.StringVar(value="API Key não configurada")
+        self.api_status_label = ctk.CTkLabel(
+            status_frame,
+            textvariable=self.api_status_var,
+            font=ctk.CTkFont(size=11),
+            text_color=theme_manager.get_color("error")
+        )
+        self.api_status_label.pack(anchor="w")
+        
+        # Modelo atual
+        model_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        model_frame.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            model_frame,
+            text="Modelo:",
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).pack(anchor="w")
+        
+        self.model_var = tk.StringVar(value=self.model_name)
+        model_label = ctk.CTkLabel(
+            model_frame,
+            textvariable=self.model_var,
+            font=ctk.CTkFont(size=11),
+            text_color=theme_manager.get_color("text_secondary")
+        )
+        model_label.pack(anchor="w")
+        
+        # Botões de configuração
+        buttons_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        buttons_frame.pack(fill="x")
+        buttons_frame.grid_columnconfigure((0, 1), weight=1)
+        
+        self.config_api_btn = ModernButton(
+            buttons_frame,
+            text="API Key",
+            command=self._configure_api_key,
+            width=140,
+            height=35
+        )
+        self.config_api_btn.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+        
+        self.config_model_btn = ModernButton(
+            buttons_frame,
+            text="Modelo",
+            command=self._configure_model,
+            width=140,
+            height=35
+        )
+        self.config_model_btn.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        
+        return section
+
+    def _create_console_section(self, parent):
+        """Console compacto de operações"""
+        section = ModernSection(parent, title="Console")
+        
+        # Console text widget
+        self.console = ConsoleWidget(section.content_frame)
+        self.console.pack(fill="both", expand=True)
+        
+        return section
+
+    def _create_right_panel(self, parent):
+        """Cria o painel direito com preview e configurações"""
+        right_frame = ModernFrame(parent)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(0, weight=1)
+        
+        # Tabs para preview e configurações
+        self.tabview = ctk.CTkTabview(right_frame, corner_radius=8)
+        self.tabview.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Tab de preview
+        preview_tab = self.tabview.add("README Gerado")
+        self._create_preview_tab(preview_tab)
+        
+        # Tab de configurações
+        settings_tab = self.tabview.add("Configurações Avançadas")
+        self._create_settings_tab(settings_tab)
+
+    def _create_preview_tab(self, parent):
+        """Tab de preview do README"""
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(1, weight=1)
+        
+        # Toolbar do preview
+        toolbar = ctk.CTkFrame(parent, height=50)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=(5, 0))
+        toolbar.grid_columnconfigure(2, weight=1)
+        
+        # Modo de visualização
+        view_label = ctk.CTkLabel(toolbar, text="Modo:", font=ctk.CTkFont(size=11))
+        view_label.grid(row=0, column=0, padx=10, pady=12)
+        
+        self.view_mode = ctk.CTkSegmentedButton(
+            toolbar,
+            values=["Preview", "Código", "Lado a Lado"],
+            command=self._change_view_mode,
+            width=250
+        )
+        self.view_mode.set("Preview")
+        self.view_mode.grid(row=0, column=1, padx=5, pady=12)
+        
+        # Botões de ação
+        actions_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
+        actions_frame.grid(row=0, column=3, padx=10, pady=8, sticky="e")
+        
+        copy_btn = ModernButton(
+            actions_frame,
+            text="Copiar",
+            command=self._copy_readme,
+            width=80,
+            height=30
+        )
+        copy_btn.pack(side="left", padx=(0, 5))
+        
+        self.save_readme_btn = ModernButton(
+            actions_frame,
+            text="Salvar",
+            command=self._save_readme,
+            width=80,
+            height=30
+        )
+        self.save_readme_btn.pack(side="left")
+        self.save_readme_btn.configure(state="disabled")
+        
+        # Área de preview
+        self.preview_container = ctk.CTkFrame(parent)
+        self.preview_container.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        self.preview_container.grid_columnconfigure((0, 1), weight=1)
+        self.preview_container.grid_rowconfigure(0, weight=1)
+        
+        # Preview renderizado
+        self.readme_preview = ModernTextWidget(self.preview_container, wrap="word")
+        self.readme_preview.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=5)
+        
+        # Editor de código
+        self.code_editor = ModernTextWidget(
+            self.preview_container, 
+            wrap="none",
+            font_family=theme_manager.get_mono_font_family()
+        )
+        self.code_editor.grid(row=0, column=1, sticky="nsew", padx=(2, 5), pady=5)
+        self.code_editor.grid_remove()  # Inicialmente oculto
+
+    def _create_settings_tab(self, parent):
+        """Tab de configurações avançadas"""
+        # Scrollable frame para as configurações
+        settings_scroll = ctk.CTkScrollableFrame(parent, label_text="Configurações de Geração")
+        settings_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        settings_scroll.grid_columnconfigure(0, weight=1)
+        
+        # Seção de prompt personalizado
+        prompt_section = self._create_prompt_section(settings_scroll)
+        prompt_section.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        
+        # Seção de filtros
+        filter_section = self._create_filter_section(settings_scroll)
+        filter_section.grid(row=1, column=0, sticky="ew", pady=(0, 15))
+        
+        # Seção de estilo
+        style_section = self._create_style_section(settings_scroll)
+        style_section.grid(row=2, column=0, sticky="ew", pady=(0, 15))
+
+    def _create_prompt_section(self, parent):
+        """Seção de prompt personalizado"""
+        section = ModernSection(parent, title="Prompt Personalizado")
+        
+        # Switch para ativar prompt customizado
+        self.custom_prompt_enabled = ctk.CTkSwitch(
+            section.content_frame,
+            text="Usar prompt personalizado",
+            command=self._toggle_custom_prompt
+        )
+        self.custom_prompt_enabled.pack(anchor="w", pady=(0, 10))
+        
+        # Área de texto para o prompt
+        self.custom_prompt_text = ModernTextWidget(
+            section.content_frame,
+            height=120,
+            placeholder_text="Digite instruções específicas para a IA..."
+        )
+        self.custom_prompt_text.pack(fill="x", pady=(0, 10))
+        self.custom_prompt_text.configure(state="disabled")
+        
+        return section
+
+    def _create_filter_section(self, parent):
+        """Seção de filtros de arquivo"""
+        section = ModernSection(parent, title="Filtros de Arquivo")
+        
+        # Checkboxes de filtros
+        filters_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        filters_frame.pack(fill="x", pady=(0, 15))
+        filters_frame.grid_columnconfigure((0, 1), weight=1)
+        
+        self.include_tests = ctk.CTkCheckBox(filters_frame, text="Incluir testes")
+        self.include_tests.grid(row=0, column=0, sticky="w", pady=2)
+        self.include_tests.select()
+        
+        self.include_docs = ctk.CTkCheckBox(filters_frame, text="Incluir documentação")
+        self.include_docs.grid(row=0, column=1, sticky="w", pady=2)
+        self.include_docs.select()
+        
+        self.include_config = ctk.CTkCheckBox(filters_frame, text="Incluir configurações")
+        self.include_config.grid(row=1, column=0, sticky="w", pady=2)
+        self.include_config.select()
+        
+        # Configurações numéricas
+        numeric_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        numeric_frame.pack(fill="x")
+        numeric_frame.grid_columnconfigure(1, weight=1)
+        
+        # Tamanho máximo de arquivo
+        size_label = ctk.CTkLabel(numeric_frame, text="Tamanho máx. por arquivo (KB):")
+        size_label.grid(row=0, column=0, sticky="w", pady=5)
+        
+        self.max_file_size = ctk.CTkEntry(numeric_frame, width=100, placeholder_text="5")
+        self.max_file_size.grid(row=0, column=1, sticky="e", pady=5)
+        self.max_file_size.insert(0, "5")
+        
+        # Máximo de arquivos
+        files_label = ctk.CTkLabel(numeric_frame, text="Máximo de arquivos:")
+        files_label.grid(row=1, column=0, sticky="w", pady=5)
+        
+        self.max_files = ctk.CTkEntry(numeric_frame, width=100, placeholder_text="30")
+        self.max_files.grid(row=1, column=1, sticky="e", pady=5)
+        self.max_files.insert(0, "30")
+        
+        return section
+
+    def _create_style_section(self, parent):
+        """Seção de estilo do README"""
+        section = ModernSection(parent, title="Estilo do README")
+        
+        # Selector de estilo
+        style_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        style_frame.pack(fill="x", pady=(0, 15))
+        style_frame.grid_columnconfigure(1, weight=1)
+        
+        style_label = ctk.CTkLabel(style_frame, text="Estilo:")
+        style_label.grid(row=0, column=0, sticky="w", pady=5)
+        
+        self.readme_style = ctk.CTkComboBox(
+            style_frame,
+            values=["Profissional", "Detalhado", "Minimalista", "Tutorial", "Open Source"],
+            width=200
+        )
+        self.readme_style.grid(row=0, column=1, sticky="e", pady=5)
+        self.readme_style.set("Profissional")
+        
+        # Opções adicionais
+        options_frame = ctk.CTkFrame(section.content_frame, fg_color="transparent")
+        options_frame.pack(fill="x")
+        options_frame.grid_columnconfigure((0, 1), weight=1)
+        
+        self.include_badges = ctk.CTkCheckBox(options_frame, text="Incluir badges")
+        self.include_badges.grid(row=0, column=0, sticky="w", pady=2)
+        self.include_badges.select()
+        
+        self.include_toc = ctk.CTkCheckBox(options_frame, text="Incluir índice")
+        self.include_toc.grid(row=0, column=1, sticky="w", pady=2)
+        self.include_toc.select()
+        
+        self.include_examples = ctk.CTkCheckBox(options_frame, text="Incluir exemplos")
+        self.include_examples.grid(row=1, column=0, sticky="w", pady=2)
+        self.include_examples.select()
+        
+        return section
+
+    def _create_footer(self):
+        """Cria o footer com controles de geração"""
+        footer = ModernFrame(self, corner_radius=0, height=80)
+        footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+        footer.grid_columnconfigure(0, weight=1)
+        
+        # Conteúdo do footer
+        content_frame = ctk.CTkFrame(footer, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True, padx=20, pady=15)
+        content_frame.grid_columnconfigure(0, weight=1)
+        
+        # Progress bar (inicialmente oculto)
+        self.progress_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+        self.progress_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.progress_frame.grid_columnconfigure(0, weight=1)
+        
+        self.progress_label = ctk.CTkLabel(
+            self.progress_frame,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=theme_manager.get_color("text_secondary")
+        )
+        self.progress_label.grid(row=0, column=0, sticky="w")
+        
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame, height=8)
+        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.progress_bar.set(0)
+        
+        # Ocultar progress inicialmente
+        self.progress_frame.grid_remove()
+        
+        # Botão principal de geração
+        button_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+        button_frame.grid(row=1, column=0)
+        
+        self.generate_btn = ModernButton(
+            button_frame,
+            text="Gerar README",
+            command=self._generate_readme,
+            width=250,
+            height=45,
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        self.generate_btn.pack()
+        self.generate_btn.configure(state="disabled")
+
+    # Event handlers
+    def _toggle_theme(self):
+        """Alterna o tema da aplicação"""
+        theme_manager.switch_theme()
+        # Força um refresh da interface
+        self.update()
+
+    def _change_view_mode(self, mode):
+        """Altera o modo de visualização do preview"""
+        if mode == "Preview":
+            self.readme_preview.grid()
+            self.code_editor.grid_remove()
+            self.preview_container.grid_columnconfigure(0, weight=1)
+            self.preview_container.grid_columnconfigure(1, weight=0)
+        elif mode == "Código":
+            self.readme_preview.grid_remove()
+            self.code_editor.grid()
+            self.preview_container.grid_columnconfigure(0, weight=0)
+            self.preview_container.grid_columnconfigure(1, weight=1)
+        elif mode == "Lado a Lado":
+            self.readme_preview.grid()
+            self.code_editor.grid()
+            self.preview_container.grid_columnconfigure((0, 1), weight=1)
+
+    def _toggle_custom_prompt(self):
+        """Ativa/desativa o prompt personalizado"""
+        if self.custom_prompt_enabled.get():
+            self.custom_prompt_text.configure(state="normal")
+        else:
+            self.custom_prompt_text.configure(state="disabled")
 
     def _select_zip_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Selecionar arquivo ZIP do projeto",
-            str(Path.home()),
-            "Arquivos ZIP (*.zip)",
+        """Seleciona arquivo ZIP do projeto"""
+        file_path = filedialog.askopenfilename(
+            title="Selecionar arquivo ZIP do projeto",
+            initialdir=str(Path.home()),
+            filetypes=[("Arquivos ZIP", "*.zip")]
         )
-        if path:
-            self.zip_file_path = path
-            self.file_path_label.setText(os.path.basename(path))
-            self.console.append_step("Arquivo ZIP", "success", os.path.basename(path))
+        
+        if file_path:
+            self.zip_file_path = file_path
+            filename = os.path.basename(file_path)
+            self.file_path_var.set(filename)
+            self.console.append_step("Arquivo", "success", filename)
             self._update_generate_button_state()
 
-    def _prompt_api_key(self):
-        key, ok = QInputDialog.getText(
-            self, 
-            "API Key do Google Gemini", 
-            "Digite sua API Key do Google Gemini:\n(Obtenha em: https://aistudio.google.com/app/apikey)",
-            text=self.api_key or ""
-        )
-        if ok and key.strip():
-            self.api_key = key.strip()
+    def _configure_api_key(self):
+        """Configura a API Key do Gemini"""
+        dialog = APIKeyDialog(self, self.api_key or "")
+        if dialog.result:
+            self.api_key = dialog.result
             self.config_mgr.set_api_key(self.api_key)
             self.console.append_step("API Key", "progress", "Validando...")
-            self._api_key_validated = False
-            self._models_loaded = False
-            self._update_generate_button_state()
             self._validate_api_key_async()
 
-    def _prompt_model_name(self):
+    def _configure_model(self):
+        """Configura o modelo Gemini"""
         if not self._models_loaded or not self.available_models:
-            QMessageBox.warning(
-                self, 
-                "Modelos não carregados", 
+            messagebox.showwarning(
+                "Modelos não carregados",
                 "Configure uma API Key válida primeiro para carregar a lista de modelos."
             )
             return
-            
-        if self.available_models:
-            cur = 0
-            try:
-                cur = self.available_models.index(self.model_name)
-            except ValueError:
-                pass
-            model, ok = QInputDialog.getItem(
-                self,
-                "Selecionar Modelo Gemini",
-                "Modelo:",
-                self.available_models,
-                current=cur,
-                editable=False,
-            )
-        else:
-            model, ok = QInputDialog.getText(
-                self, "Modelo Gemini", "Nome do modelo:", text=self.model_name
-            )
-        if ok and model:
-            self.model_name = model
-            self.model_label.setText(model)
-            self.config_mgr.set_gemini_model(model)
-            self.console.append_step("Modelo", "success", model)
+        
+        dialog = ModelSelectionDialog(self, self.available_models, self.model_name)
+        if dialog.result:
+            self.model_name = dialog.result
+            self.model_var.set(self.model_name)
+            self.config_mgr.set_gemini_model(self.model_name)
+            self.console.append_step("Modelo", "success", self.model_name)
             if self.api_key:
                 self._initialize_gemini_client()
 
+    def _generate_readme(self):
+        """Inicia a geração do README"""
+        if not self._can_generate():
+            return
+        
+        # Configurar interface para geração
+        self.generate_btn.configure(state="disabled", text="Gerando...")
+        self.progress_frame.grid()
+        self.progress_bar.set(0)
+        self.progress_label.configure(text="Preparando...")
+        
+        # Obter configurações
+        config = self._get_generation_config()
+        
+        # Iniciar geração em thread separada
+        self.console.append_step("Geração", "progress", "Iniciando...")
+        thread = threading.Thread(
+            target=self._generate_readme_worker,
+            args=(self.zip_file_path, config),
+            daemon=True
+        )
+        thread.start()
+        self._active_threads.append(thread)
+
+    def _generate_readme_worker(self, zip_path: str, config: Dict):
+        """Worker thread para gerar README"""
+        try:
+            # Atualizar progress
+            self.after(0, lambda: self._update_progress("Extraindo dados do projeto", 10))
+            
+            # Extrair dados
+            project_data = extract_project_data_from_zip(zip_path, config)
+            
+            # Montar prompt
+            self.after(0, lambda: self._update_progress("Preparando prompt para IA", 40))
+            prompt = build_prompt(project_data, config)
+            
+            # Gerar com IA
+            self.after(0, lambda: self._update_progress("Consultando Gemini AI", 70))
+            if not self.gemini_client:
+                raise Exception("Cliente Gemini não está disponível")
+            
+            response = self.gemini_client.send_conversational_prompt(prompt)
+            
+            # Processar resposta
+            self.after(0, lambda: self._update_progress("Finalizando", 95))
+            readme = clean_readme_content(response or "")
+            
+            # Sucesso
+            self.after(0, lambda: self._generation_success(readme))
+            
+        except QuotaExceededException as e:
+            self.after(0, lambda: self._generation_quota_error(e))
+        except Exception as e:
+            self.after(0, lambda: self._generation_error(str(e)))
+
+    def _update_progress(self, message: str, value: int):
+        """Atualiza a barra de progresso"""
+        self.progress_label.configure(text=message)
+        self.progress_bar.set(value / 100)
+        self.update_idletasks()
+
+    def _generation_success(self, readme_text: str):
+        """Callback para geração bem-sucedida"""
+        self.progress_frame.grid_remove()
+        self.generate_btn.configure(state="normal", text="Gerar README")
+        
+        if not readme_text:
+            self.console.append_step("README", "error", "IA retornou conteúdo vazio")
+            messagebox.showwarning("Falha", "A IA não retornou conteúdo.")
+            return
+        
+        self.generated_readme = readme_text
+        self.readme_preview.set_content(readme_text)
+        self.code_editor.set_content(readme_text)
+        self.save_readme_btn.configure(state="normal")
+        self.tabview.set("README Gerado")
+        self.console.append_step("README", "success", "Gerado com sucesso")
+
+    def _generation_quota_error(self, error: QuotaExceededException):
+        """Callback para erro de quota"""
+        self.progress_frame.grid_remove()
+        self.generate_btn.configure(state="normal", text="Gerar README")
+        self.console.append_step("Quota", "error", f"Limite excedido: {error.model_name}")
+        
+        QuotaExceededDialog(self, error.model_name, self._configure_model)
+
+    def _generation_error(self, error_msg: str):
+        """Callback para erro geral"""
+        self.progress_frame.grid_remove()
+        self.generate_btn.configure(state="normal", text="Gerar README")
+        self.console.append_step("Erro", "error", "Falha na geração")
+        messagebox.showerror("Erro na Geração", f"Erro ao gerar README:\n\n{error_msg}")
+
+    def _save_readme(self):
+        """Salva o README gerado"""
+        if not self.generated_readme:
+            messagebox.showwarning("Aviso", "Nenhum README foi gerado ainda.")
+            return
+        
+        default_name = "README.md"
+        if self.zip_file_path:
+            base_name = os.path.splitext(os.path.basename(self.zip_file_path))[0]
+            default_name = f"{base_name}_README.md"
+        
+        file_path = filedialog.asksaveasfilename(
+            title="Salvar README",
+            defaultextension=".md",
+            initialname=default_name,
+            filetypes=[("Markdown", "*.md"), ("Todos os arquivos", "*.*")]
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.generated_readme)
+                messagebox.showinfo("Sucesso", f"README salvo em:\n{file_path}")
+                self.console.append_step("Arquivo", "success", f"Salvo: {os.path.basename(file_path)}")
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao salvar arquivo:\n{e}")
+                self.console.append_step("Arquivo", "error", f"Erro ao salvar: {e}")
+
+    def _copy_readme(self):
+        """Copia o README para área de transferência"""
+        if not self.generated_readme:
+            messagebox.showwarning("Aviso", "Nenhum README foi gerado ainda.")
+            return
+        
+        self.clipboard_clear()
+        self.clipboard_append(self.generated_readme)
+        messagebox.showinfo("Copiado", "README copiado para a área de transferência!")
+        self.console.append_step("Clipboard", "success", "README copiado")
+
+    # Validation and state management
     def _validate_api_key_async(self):
-        """Valida a API Key em thread separada"""
+        """Valida API Key em thread separada"""
         if not self.api_key:
             return
-            
-        th = run_in_thread(
-            self._validate_api_key_worker,
-            self.api_key,
-            callback_slot=self._api_key_validation_callback,
-            error_slot=self._api_key_validation_error,
+        
+        thread = threading.Thread(
+            target=self._validate_api_key_worker,
+            daemon=True
         )
-        self._threads.append(th)
+        thread.start()
+        self._active_threads.append(thread)
 
-    def _validate_api_key_worker(self, progress_cb, step_cb, worker, api_key):
+    def _validate_api_key_worker(self):
         """Worker para validar API Key"""
         try:
-            step_cb("API", "progress", "Configurando cliente...")
-            genai.configure(api_key=api_key)
+            genai.configure(api_key=self.api_key)
             
-            step_cb("Modelos", "progress", "Carregando lista...")
-            # Primeiro carrega lista de modelos disponíveis
-            try:
-                models_data = list(genai.list_models())
-            except Exception as e:
-                error_str = str(e).lower()
-                if "quota" in error_str or "429" in str(e):
-                    return {
-                        'valid': False, 
-                        'models': [],
-                        'quota_exceeded': True,
-                        'message': 'Quota da API excedida. Aguarde ou verifique seu plano de cobrança.'
-                    }
-                elif "403" in str(e):
-                    return {
-                        'valid': False, 
-                        'models': [],
-                        'quota_exceeded': False,
-                        'message': 'API Key sem permissões adequadas. Verifique se a chave tem acesso aos modelos Gemini.'
-                    }
-                raise
-            
+            # Carregar modelos disponíveis
+            models_data = list(genai.list_models())
             available_models = []
-            working_models = []
             
             for model in models_data:
                 if hasattr(model, 'name'):
                     model_name = model.name
                     display_name = model_name.replace('models/', '') if model_name.startswith('models/') else model_name
-                    available_models.append(display_name)
-                    
-                    # Verificar se suporta generateContent
                     if hasattr(model, 'supported_generation_methods'):
                         if 'generateContent' in model.supported_generation_methods:
-                            working_models.append(model_name)
+                            available_models.append(display_name)
                     else:
-                        working_models.append(model_name)
+                        available_models.append(display_name)
             
             if not available_models:
-                return {
-                    'valid': False, 
-                    'models': [],
-                    'quota_exceeded': False,
-                    'message': 'Nenhum modelo disponível encontrado para esta API Key'
-                }
+                self.after(0, lambda: self._api_validation_failed("Nenhum modelo disponível"))
+                return
             
-            # Testar conexão com um modelo disponível
+            # Testar conexão
             test_model = None
-            if working_models:
-                # Priorizar modelos conhecidos
-                preferred_models = ['models/gemini-1.5-flash', 'models/gemini-1.0-pro', 'models/gemini-1.5-pro']
-                for preferred in preferred_models:
-                    if preferred in working_models:
-                        test_model = preferred
-                        break
-                
-                if not test_model:
-                    test_model = working_models[0]
+            preferred_models = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-1.5-pro']
+            for preferred in preferred_models:
+                if preferred in available_models:
+                    test_model = f'models/{preferred}'
+                    break
+            
+            if not test_model and available_models:
+                test_model = f'models/{available_models[0]}'
             
             if test_model:
-                step_cb("API", "progress", f"Testando conexão...")
-                try:
-                    model = genai.GenerativeModel(test_model)
-                    response = model.generate_content(
-                        "Hi", 
-                        generation_config=genai.types.GenerationConfig(
-                            max_output_tokens=5,
-                            temperature=0.1
-                        )
-                    )
-                    # Se chegou até aqui, API Key é válida
-                except Exception as e:
-                    error_str = str(e).lower()
-                    if "quota" in error_str or "429" in str(e):
-                        return {
-                            'valid': False, 
-                            'models': available_models,
-                            'quota_exceeded': True,
-                            'message': 'API Key válida, mas quota excedida. Aguarde ou atualize seu plano.'
-                        }
-                    elif "404" in str(e):
-                        # Modelo específico não encontrado, mas API Key pode ser válida
-                        pass
-                    else:
-                        raise
+                model = genai.GenerativeModel(test_model)
+                response = model.generate_content(
+                    "Test",
+                    generation_config=genai.types.GenerationConfig(max_output_tokens=5)
+                )
             
-            return {
-                'valid': True, 
-                'models': available_models,
-                'working_models': working_models,
-                'quota_exceeded': False,
-                'message': 'API Key validada com sucesso'
-            }
+            # Sucesso
+            self.after(0, lambda: self._api_validation_success(available_models))
             
         except Exception as e:
-            error_str = str(e).lower()
-            if "quota" in error_str or "429" in str(e):
-                return {
-                    'valid': False, 
-                    'models': [],
-                    'quota_exceeded': True,
-                    'message': 'Quota da API excedida. Verifique seu plano de cobrança no Google AI Studio.'
-                }
-            elif "403" in str(e):
-                return {
-                    'valid': False, 
-                    'models': [],
-                    'quota_exceeded': False,
-                    'message': 'API Key sem permissões adequadas ou inválida.'
-                }
-            elif "401" in str(e):
-                return {
-                    'valid': False, 
-                    'models': [],
-                    'quota_exceeded': False,
-                    'message': 'API Key inválida ou expirada.'
-                }
+            error_msg = str(e)
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                self.after(0, lambda: self._api_validation_quota_error())
             else:
-                return {
-                    'valid': False, 
-                    'models': [],
-                    'quota_exceeded': False,
-                    'message': f'Erro na validação: {str(e)}'
-                }
+                self.after(0, lambda: self._api_validation_failed(error_msg))
 
-    def _api_key_validation_callback(self, result):
-        """Callback para validação da API Key"""
-        if result['valid']:
-            self._api_key_validated = True
-            self.available_models = result['models']  # Nomes limpos para display
-            self._models_loaded = True
-            
-            self.console.append_step("API Key", "success", "Validada")
-            self.console.append_step("Modelos", "success", f"{len(self.available_models)} modelos carregados")
-            
-            # Verificar se o modelo atual está na lista
-            current_model = self.model_name
-            if current_model.startswith('models/'):
-                current_model = current_model.replace('models/', '')
-                
-            if current_model not in self.available_models:
-                # Usar primeiro modelo disponível se o atual não estiver na lista
-                if self.available_models:
-                    self.model_name = self.available_models[0]
-                    self.model_label.setText(self.model_name)
-                    self.config_mgr.set_gemini_model(self.model_name)
-                    self.console.append_step("Modelo", "info", f"Modelo alterado para {self.model_name}")
-            
-            # Inicializa o cliente Gemini
-            self._initialize_gemini_client()
-        else:
-            self._api_key_validated = False
-            self._models_loaded = False
-            self.available_models = []
-            self.gemini_client = None
-            
-            self.console.append_step("API Key", "error", "Problema na validação")
-            
-            # Tratamento especial para quota excedida
-            if result.get('quota_exceeded'):
-                self._show_quota_exceeded_dialog(result['message'])
-            else:
-                QMessageBox.critical(
-                    self, 
-                    "API Key Inválida", 
-                    f"Erro ao validar API Key:\n\n{result['message']}\n\nVerifique:\n• Se a chave está correta\n• Se você tem acesso aos modelos Gemini\n• Sua quota da API"
-                )
+    def _api_validation_success(self, models: list[str]):
+        """Callback para validação bem-sucedida"""
+        self._api_key_validated = True
+        self._models_loaded = True
+        self.available_models = models
         
-        self._update_generate_button_state()
-        self._update_ui_status()
-
-    def _show_quota_exceeded_dialog(self, message):
-        """Mostra diálogo específico para quota excedida"""
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Quota da API Excedida")
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setText("Sua quota da API Google Gemini foi excedida.")
-        msg_box.setDetailedText(message)
+        self.api_status_var.set("IA Pronta")
+        self.api_status_label.configure(text_color=theme_manager.get_color("success"))
+        self.console.append_step("API Key", "success", "Validada")
+        self.console.append_step("Modelos", "success", f"{len(models)} modelos carregados")
         
-        detailed_info = """
-SOLUÇÕES POSSÍVEIS:
-
-1. AGUARDAR RENOVAÇÃO:
-   • Quotas gratuitas se renovam mensalmente
-   • Aguarde até o próximo ciclo de cobrança
-
-2. VERIFICAR SEU PLANO:
-   • Acesse: https://aistudio.google.com/app/apikey
-   • Verifique seus limites de uso
-   • Considere upgrader para plano pago
-
-3. QUOTA DIÁRIA:
-   • Se você tem quota diária, aguarde 24h
-   • Tente novamente amanhã
-
-4. GERENCIAR USO:
-   • Use o modelo com moderação
-   • Evite prompts muito longos
-   • Considere usar modelos menores como gemini-1.0-pro
-
-Para mais informações sobre limites e preços:
-https://ai.google.dev/pricing
-        """
+        # Verificar modelo atual
+        if self.model_name not in models and models:
+            self.model_name = models[0]
+            self.model_var.set(self.model_name)
+            self.config_mgr.set_gemini_model(self.model_name)
         
-        msg_box.setInformativeText(detailed_info)
-        msg_box.setStandardButtons(QMessageBox.Ok)
-        msg_box.exec_()
+        self._initialize_gemini_client()
 
-    def _show_quota_model_selection_dialog(self, current_model):
-        """Mostra diálogo específico para quota excedida com sugestão de troca de modelo"""
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Quota Excedida - Trocar Modelo?")
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setText(f"A quota do modelo '{current_model}' foi excedida.")
-        
-        detailed_info = f"""
-MODELO ATUAL: {current_model}
-STATUS: Quota excedida
-
-SUGESTÕES:
-• Experimente outro modelo (gemini-1.0-pro, gemini-1.5-flash)  
-• Aguarde a renovação da quota
-• Verifique seus limites no Google AI Studio
-
-O que você gostaria de fazer?
-        """
-        
-        msg_box.setInformativeText(detailed_info)
-        
-        # Botões customizados
-        change_model_btn = msg_box.addButton("Trocar Modelo", QMessageBox.AcceptRole)
-        wait_btn = msg_box.addButton("Aguardar", QMessageBox.RejectRole)
-        
-        msg_box.setDefaultButton(change_model_btn)
-        
-        result = msg_box.exec_()
-        
-        # Se usuário escolheu trocar modelo
-        if msg_box.clickedButton() == change_model_btn:
-            self._prompt_model_name()
-
-    def _api_key_validation_error(self, title, msg):
-        """Error callback para validação da API Key"""
+    def _api_validation_failed(self, error_msg: str):
+        """Callback para falha na validação"""
         self._api_key_validated = False
         self._models_loaded = False
         self.available_models = []
         self.gemini_client = None
         
-        self.console.append_step("API Key", "error", "Erro na validação")
-        self._update_generate_button_state()
-        self._update_ui_status()
+        self.api_status_var.set("API Key inválida")
+        self.api_status_label.configure(text_color=theme_manager.get_color("error"))
+        self.console.append_step("API Key", "error", "Validação falhou")
         
-        QMessageBox.critical(self, title, msg)
+        messagebox.showerror(
+            "API Key Inválida",
+            f"Erro ao validar API Key:\n\n{error_msg}\n\nVerifique:\n• Se a chave está correta\n• Se você tem acesso aos modelos Gemini"
+        )
+        self._update_generate_button_state()
+
+    def _api_validation_quota_error(self):
+        """Callback para erro de quota na validação"""
+        self._api_key_validated = False
+        self._models_loaded = False
+        self.available_models = []
+        self.gemini_client = None
+        
+        self.api_status_var.set("Quota excedida")
+        self.api_status_label.configure(text_color=theme_manager.get_color("warning"))
+        self.console.append_step("API Key", "warning", "Quota excedida")
+        
+        QuotaExceededDialog(self, "API", self._configure_api_key)
+        self._update_generate_button_state()
 
     def _initialize_gemini_client(self):
-        """Cria GeminiClient após validação"""
+        """Inicializa o cliente Gemini"""
         if not self._api_key_validated or not self.api_key:
             return
-            
+        
         try:
-            # Usar nome do modelo com prefixo models/ se necessário
-            model_name_for_client = self.model_name
-            if not model_name_for_client.startswith('models/'):
-                model_name_for_client = f'models/{model_name_for_client}'
+            model_name = self.model_name
+            if not model_name.startswith('models/'):
+                model_name = f'models/{model_name}'
             
-            self.gemini_client = GeminiClient(self.api_key, model_name_for_client)
-            self.console.append_step("Cliente IA", "success", f"Inicializado com {self.model_name}")
+            self.gemini_client = GeminiClient(self.api_key, model_name)
+            self.console.append_step("Cliente IA", "success", f"Inicializado: {self.model_name}")
             self._update_generate_button_state()
-            self._update_ui_status()
+            
         except QuotaExceededException as e:
-            logger.error("Quota excedida ao inicializar GeminiClient", exc_info=True)
             self.gemini_client = None
             self.console.append_step("Cliente IA", "error", f"Quota excedida: {e.model_name}")
-            
-            # Mostrar diálogo específico para quota com sugestão de mudança de modelo
-            self._show_quota_model_selection_dialog(e.model_name)
+            QuotaExceededDialog(self, e.model_name, self._configure_model)
             self._update_generate_button_state()
-            self._update_ui_status()
+            
         except Exception as e:
-            logger.error("Erro ao inicializar GeminiClient", exc_info=True)
             self.gemini_client = None
             self.console.append_step("Cliente IA", "error", "Falha na inicialização")
-            
-            error_msg = str(e)
-            if "404" in error_msg:
-                error_msg = f"Modelo '{self.model_name}' não encontrado ou não suportado."
-            elif "403" in error_msg:
-                error_msg = "Sem permissões para usar este modelo."
-            
-            QMessageBox.critical(self, "Erro na IA", f"Erro ao inicializar cliente:\n{error_msg}")
+            messagebox.showerror("Erro na IA", f"Erro ao inicializar cliente:\n{str(e)}")
             self._update_generate_button_state()
-            self._update_ui_status()
 
-    def _update_generate_button_state(self):
-        """Atualiza estado do botão Gerar README"""
-        can_generate = (
-            self._api_key_validated and 
-            self._models_loaded and 
-            self.gemini_client is not None and 
+    def _can_generate(self) -> bool:
+        """Verifica se pode gerar README"""
+        return (
+            self._api_key_validated and
+            self._models_loaded and
+            self.gemini_client is not None and
             bool(self.zip_file_path)
         )
-        self.generate_btn.setEnabled(can_generate)
+
+    def _update_generate_button_state(self):
+        """Atualiza estado do botão de geração"""
+        if self._can_generate():
+            self.generate_btn.configure(state="normal", text="Gerar README")
+        else:
+            self.generate_btn.configure(state="disabled", text="Gerar README (Indisponível)")
+
+    def _get_generation_config(self) -> Dict:
+        """Obtém configuração para geração"""
+        try:
+            max_file_size = int(self.max_file_size.get() or "5")
+            max_files = int(self.max_files.get() or "30")
+        except ValueError:
+            max_file_size = 5
+            max_files = 30
         
-        if can_generate:
-            self.generate_btn.setText("Gerar README")
-        else:
-            reasons = []
-            if not self._api_key_validated:
-                reasons.append("API Key não validada")
-            if not self._models_loaded:
-                reasons.append("Modelos não carregados")
-            if not self.zip_file_path:
-                reasons.append("Arquivo ZIP não selecionado")
-            
-            tooltip = "Requisitos faltantes:\n• " + "\n• ".join(reasons)
-            self.generate_btn.setToolTip(tooltip)
-            self.generate_btn.setText("Gerar README (Indisponível)")
-
-    def _update_ui_status(self):
-        """Atualiza labels de status na UI"""
-        if self._api_key_validated and self.gemini_client:
-            self.api_status_label.setText(f"IA Pronta – {self.model_name}")
-            self.api_status_label.setStyleSheet(f"color: {self.theme.success};")
-        elif self.api_key:
-            self.api_status_label.setText("Validando API Key...")
-            self.api_status_label.setStyleSheet(f"color: {self.theme.warning};")
-        else:
-            self.api_status_label.setText("API Key não configurada")
-            self.api_status_label.setStyleSheet(f"color: {self.theme.error};")
-
-    def _get_advanced_config(self) -> Dict[str, object]:
-        sc = self.settings_controls
         return {
-            "custom_prompt_enabled": sc["custom_prompt_enabled"].isChecked(),
-            "custom_prompt": sc["custom_prompt_text"].toPlainText(),
-            "include_tests": sc["include_tests"].isChecked(),
-            "include_docs": sc["include_docs"].isChecked(),
-            "include_config": sc["include_config"].isChecked(),
-            "max_file_size_kb": sc["max_file_size_spin"].value(),
-            "max_files": sc["max_files_spin"].value(),
-            "readme_style": sc["readme_style_combo"].currentText().lower(),
-            "include_badges": sc["include_badges"].isChecked(),
-            "include_toc": sc["include_toc"].isChecked(),
-            "include_examples": sc["include_examples"].isChecked(),
+            "custom_prompt_enabled": self.custom_prompt_enabled.get(),
+            "custom_prompt": self.custom_prompt_text.get("1.0", "end-1c"),
+            "include_tests": self.include_tests.get(),
+            "include_docs": self.include_docs.get(), 
+            "include_config": self.include_config.get(),
+            "max_file_size_kb": max_file_size,
+            "max_files": max_files,
+            "readme_style": self.readme_style.get().lower(),
+            "include_badges": self.include_badges.get(),
+            "include_toc": self.include_toc.get(),
+            "include_examples": self.include_examples.get(),
         }
 
-    # ============================================================================
-    # PROGRESS BAR CALLBACKS - NOVA IMPLEMENTAÇÃO FUNCIONAL
-    # ============================================================================
-    
-    def _update_progress(self, message: str, value: int):
-        """Callback para atualizar a barra de progresso"""
-        logger.debug(f"Progress update: {message} - {value}%")
-        
-        # Atualizar a barra de progresso
-        self.progress_bar.setValue(value)
-        
-        # Atualizar o label de progresso
-        self.progress_label.setText(message)
-        
-        # Forçar atualização da UI
-        QApplication.processEvents()
-
-    def _update_step(self, step_name: str, status: str, details: str = ""):
-        """Callback para atualizar steps no console"""
-        logger.debug(f"Step update: {step_name} - {status} - {details}")
-        self.console.append_step(step_name, status, details)
-
-    def _trigger_readme_generation(self):
-        """Inicia geração do README"""
-        # Validação dupla de segurança
-        if not self._api_key_validated or not self.gemini_client or not self.zip_file_path:
-            QMessageBox.warning(
-                self, 
-                "Geração não disponível", 
-                "Configure uma API Key válida e selecione um arquivo ZIP primeiro."
-            )
-            return
-            
-        cfg = self._get_advanced_config()
-        
-        # Reset e show progress
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(True)
-        self.progress_label.setText("Preparando...")
-        self.progress_label.setVisible(True)
-        
-        self.console.append_step("Geração", "progress", "Iniciando…")
-        self.generate_btn.setEnabled(False)
-        self.generate_btn.setText("Gerando...")
-
-        # *** CORREÇÃO PRINCIPAL: Conectar callbacks de progresso ***
-        th = run_in_thread(
-            self._generate_readme_worker,
-            self.zip_file_path,
-            cfg,
-            callback_slot=self._readme_generation_callback,
-            error_slot=self._readme_generation_error,
-            progress_slot=self._update_progress,  # NOVO: conectar callback de progresso
-            step_slot=self._update_step,          # NOVO: conectar callback de step
-        )
-        self._threads.append(th)
-
-    def _generate_readme_worker(self, progress_cb, step_cb, worker, zip_path, cfg):
-        """Worker para gerar README"""
-        try:
-            # 1) extrai dados
-            step_cb("Extração", "progress", "Analisando ZIP...")
-            progress_cb("Extraindo dados do projeto", 10)
-            project_data = extract_project_data_from_zip(
-                zip_path, cfg, progress_cb=progress_cb, step_cb=step_cb
-            )
-            
-            if worker.is_interruption_requested():
-                return None
-
-            # 2) monta prompt
-            step_cb("Prompt", "progress", "Preparando prompt...")
-            progress_cb("Montando prompt para IA", 70)
-            prompt = build_prompt(project_data, cfg)
-
-            # 3) IA
-            step_cb("IA", "progress", "Consultando Gemini…")
-            progress_cb("Gerando README com IA", 85)
-            
-            if not self.gemini_client:
-                raise Exception("Cliente Gemini não está disponível")
-                
-            response = self.gemini_client.send_conversational_prompt(prompt)
-            
-            step_cb("Finalização", "progress", "Processando resposta...")
-            progress_cb("Finalizando", 95)
-            readme = clean_readme_content(response or "")
-            
-            progress_cb("Concluído", 100)
-            return readme
-            
-        except QuotaExceededException as e:
-            step_cb("Quota", "error", f"Limite excedido: {e.model_name}")
-            raise Exception(f"Quota excedida para o modelo '{e.model_name}'. Tente outro modelo ou aguarde a renovação da quota.")
-        except Exception as e:
-            step_cb("Erro", "error", str(e))
-            raise
-
-    def _readme_generation_callback(self, readme_text: str):
-        """Callback para geração do README"""
-        self.progress_bar.setVisible(False)
-        self.progress_label.setVisible(False)
-        self.generate_btn.setEnabled(True)
-        self.generate_btn.setText("Gerar README")
-        
-        if not readme_text:
-            self.console.append_step("README", "error", "IA retornou vazio")
-            QMessageBox.warning(self, "Falha", "A IA não retornou conteúdo.")
-            return
-            
-        self.generated_readme = readme_text
-        self.readme_preview.set_markdown_content(readme_text)
-        self.save_readme_btn.setEnabled(True)
-        self.preview_tabs.setCurrentIndex(0)  # Mostra aba de preview
-        self.console.append_step("README", "success", "Gerado com sucesso")
-
-    def _readme_generation_error(self, title, msg):
-        """Error callback para geração do README"""
-        self.progress_bar.setVisible(False)
-        self.progress_label.setVisible(False)
-        self.generate_btn.setEnabled(True)
-        self.generate_btn.setText("Gerar README")
-        
-        # Verificar se é erro de quota
-        if "quota" in msg.lower() or "429" in msg:
-            self.console.append_step("Quota", "error", "Limite excedido")
-            
-            # Extrair nome do modelo da mensagem se possível
-            model_name = self.model_name
-            if "modelo '" in msg:
-                try:
-                    model_name = msg.split("modelo '")[1].split("'")[0]
-                except:
-                    pass
-            
-            self._show_quota_model_selection_dialog(model_name)
-        else:
-            self.console.append_step("Erro", "error", title)
-            QMessageBox.critical(self, title, msg)
-
-    def _start_initial_config_check(self):
+    def _load_initial_config(self):
         """Carrega configuração inicial"""
         saved_api_key = self.config_mgr.get_api_key()
         if saved_api_key:
@@ -723,144 +929,27 @@ O que você gostaria de fazer?
             self._validate_api_key_async()
         else:
             self.console.append_step("Configuração", "info", "Configure uma API Key para começar")
-            self._update_ui_status()
 
-    # Menu methods
-    def _save_readme(self):
-        """Salva o README gerado em arquivo."""
-        if not self.generated_readme:
-            QMessageBox.warning(self, "Aviso", "Nenhum README foi gerado ainda.")
-            return
-        
-        default_name = "README.md"
-        if self.zip_file_path:
-            base_name = os.path.splitext(os.path.basename(self.zip_file_path))[0]
-            default_name = f"{base_name}_README.md"
-        
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Salvar README", default_name, "Markdown (*.md);;Todos os arquivos (*)"
-        )
-        
-        if file_path:
-            try:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(self.generated_readme)
-                QMessageBox.information(self, "Sucesso", f"README salvo em:\n{file_path}")
-                self.console.append_step("Arquivo", "success", f"Salvo: {os.path.basename(file_path)}")
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Erro ao salvar arquivo:\n{e}")
-                self.console.append_step("Arquivo", "error", f"Erro ao salvar: {e}")
-
-    def _export_markdown(self):
-        """Exporta como Markdown."""
-        self._save_readme()
-
-    def _export_html(self):
-        """Exporta como HTML."""
-        if not self.generated_readme:
-            QMessageBox.warning(self, "Aviso", "Nenhum README foi gerado ainda.")
-            return
-        
-        default_name = "README.html"
-        if self.zip_file_path:
-            base_name = os.path.splitext(os.path.basename(self.zip_file_path))[0]
-            default_name = f"{base_name}_README.html"
-        
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Exportar como HTML", default_name, "HTML (*.html);;Todos os arquivos (*)"
-        )
-        
-        if file_path:
-            try:
-                html_content = self.readme_preview.markdown_renderer.render_to_html(self.generated_readme)
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(html_content)
-                QMessageBox.information(self, "Sucesso", f"HTML exportado para:\n{file_path}")
-                self.console.append_step("Export", "success", f"HTML: {os.path.basename(file_path)}")
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Erro ao exportar HTML:\n{e}")
-                self.console.append_step("Export", "error", f"Erro HTML: {e}")
-
-    def _export_pdf(self):
-        """Exporta como PDF."""
-        QMessageBox.information(self, "Funcionalidade", 
-                               "Exportação para PDF será implementada em versão futura.\n"
-                               "Por enquanto, use 'Exportar HTML' e imprima como PDF no navegador.")
-
-    def _copy_readme(self):
-        """Copia o README para a área de transferência."""
-        if not self.generated_readme:
-            QMessageBox.warning(self, "Aviso", "Nenhum README foi gerado ainda.")
-            return
-        
-        clipboard = QApplication.clipboard()
-        clipboard.setText(self.generated_readme)
-        QMessageBox.information(self, "Copiado", "README copiado para a área de transferência!")
-        self.console.append_step("Clipboard", "success", "README copiado")
-
-    def _show_about(self):
-        """Mostra informações sobre o aplicativo."""
-        about_text = f"""
-        <h2>{APP_DISPLAY_NAME}</h2>
-        <p><b>Versão:</b> {APP_VERSION}</p>
-        <p><b>Descrição:</b> Gerador inteligente de documentação README.md usando IA</p>
-        <p><b>Tecnologias:</b> Python, PyQt5, Google Gemini AI</p>
-        <p><b>Autor:</b> Desenvolvido com ❤️ para a comunidade</p>
-        <hr>
-        <p><small>Este software utiliza a API do Google Gemini para gerar documentação inteligente e profissional.</small></p>
-        """
-        QMessageBox.about(self, f"Sobre - {APP_DISPLAY_NAME}", about_text)
-
-    def _show_help(self):
-        """Mostra ajuda do aplicativo."""
-        help_text = """
-        <h3>Como usar o Gerador de README IA:</h3>
-        <ol>
-        <li><b>Configure sua API Key:</b> Vá em Configurações → Configurar API Key</li>
-        <li><b>Selecione um arquivo ZIP:</b> Use o botão "Selecionar Arquivo ZIP"</li>
-        <li><b>Ajuste as configurações:</b> Na aba "Configurações Avançadas"</li>
-        <li><b>Gere o README:</b> Clique em "Gerar README"</li>
-        <li><b>Salve o resultado:</b> Use "Salvar README" ou Ctrl+S</li>
-        </ol>
-        
-        <h4>Dicas:</h4>
-        <ul>
-        <li>O ZIP deve conter o código-fonte do seu projeto</li>
-        <li>Arquivos muito grandes são truncados automaticamente</li>
-        <li>Use prompts personalizados para necessidades específicas</li>
-        <li>Se a quota for excedida, tente outro modelo</li>
-        </ul>
-        """
-        QMessageBox.information(self, "Ajuda", help_text)
-
-    def _switch_theme(self, theme_name: str):
-        if theme_name in THEMES:
-            self.theme_name = theme_name
-            self.theme = THEMES[theme_name]
-            apply_theme(self, theme_name)
-
-    def _switch_theme_auto(self):
-        self._switch_theme(self._detect_system_mode())
-
-    def closeEvent(self, evt):
+    def _on_closing(self):
         """Cleanup ao fechar aplicação"""
-        for th in self._threads:
-            if th.isRunning():
-                th.quit()
-                th.wait(1000)
+        # Aguardar threads ativas
+        for thread in self._active_threads:
+            if thread.is_alive():
+                thread.join(timeout=1)
+        
         if self.gemini_client:
             try:
                 self.gemini_client.close()
-            except Exception:
+            except:
                 pass
-        super().closeEvent(evt)
+        
+        self.destroy()
 
 
 def main():
-    app = QApplication(sys.argv)
-    win = ReadmeGeneratorGUI()
-    win.show()
-    sys.exit(app.exec_())
+    """Função principal"""
+    app = ReadmeGeneratorApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":
