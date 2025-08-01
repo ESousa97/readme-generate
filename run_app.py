@@ -8,9 +8,9 @@ if PROJECT_ROOT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_ROOT_DIR)
 
 try:
-    # APP_VERSION será importado diretamente
-    from gerador_readme_ia.constants import APP_NAME, APP_AUTHOR, APP_VERSION
-    from gerador_readme_ia.gui.app_gui import ReadmeGeneratorGUI, APP_DISPLAY_NAME
+    # Corrigido: importar APP_DISPLAY_NAME de constants.py, não de app_gui.py
+    from gerador_readme_ia.constants import APP_NAME, APP_AUTHOR, APP_VERSION, APP_DISPLAY_NAME
+    from gerador_readme_ia.gui.app_gui import ReadmeGeneratorGUI
     from gerador_readme_ia.logger_setup import setup_logging
 except ModuleNotFoundError as e:
     print(f"Erro Crítico: Não foi possível encontrar os módulos do projeto 'gerador_readme_ia'. Detalhes: {e}")
@@ -40,20 +40,24 @@ def setup_qt_translations(app_instance: QApplication):
             loaded = True
             locale_name = lang_code
     if loaded:
-        if app_instance.installTranslator(translator): logger.info(f"Tradução Qt padrão instalada para: {locale_name}")
-        else: logger.error(f"Falha ao INSTALAR tradução Qt padrão para: {locale_name}")
-    else: logger.warning(f"Falha ao CARREGAR qualquer tradução Qt padrão para locale base: {locale_name} de {translations_path}")
+        if app_instance.installTranslator(translator):
+            logger.info(f"Tradução Qt padrão instalada para: {locale_name}")
+        else:
+            logger.error(f"Falha ao INSTALAR tradução Qt padrão para: {locale_name}")
+    else:
+        logger.warning(f"Falha ao CARREGAR qualquer tradução Qt padrão para locale base: {locale_name} de {translations_path}")
 
 if __name__ == '__main__':
-    # APP_VERSION agora é importado diretamente de constants.py
     logger.info(f"Iniciando {APP_DISPLAY_NAME} v{APP_VERSION} (PyQt5)...")
-    
-    if hasattr(Qt, 'AA_EnableHighDpiScaling'): QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    if hasattr(Qt, 'AA_UseHighDpiPixmaps'): QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
     setup_qt_translations(app)
-    
+
     try:
         main_window = ReadmeGeneratorGUI()
         main_window.show()
