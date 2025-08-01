@@ -25,7 +25,6 @@ google-generativeai>=0.3.0
 appdirs>=1.4.4
 
 # Utilitários
-pathlib>=1.0.1
 tkinter-tooltip>=2.0.0
 
 # Pensando no futuro - para funcionalidades extras

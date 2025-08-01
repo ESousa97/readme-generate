@@ -1,1 +1,23 @@
-/.venv_app
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
