@@ -36,29 +36,44 @@ class GeminiClient:
         ]
 
     @staticmethod
+    def _extract_text_from_parts(parts: Any) -> Optional[str]:
+        if not parts:
+            return None
+
+        combined_text = ""
+        for part in parts:
+            if hasattr(part, "text") and part.text:
+                combined_text += part.text
+
+        return combined_text or None
+
+    @classmethod
+    def _extract_text_from_candidates(cls, candidates: Any) -> Optional[str]:
+        if not candidates:
+            return None
+
+        for candidate in candidates:
+            if not hasattr(candidate, "content") or not candidate.content:
+                continue
+            if not hasattr(candidate.content, "parts"):
+                continue
+
+            candidate_text = cls._extract_text_from_parts(candidate.content.parts)
+            if candidate_text:
+                return candidate_text
+
+        return None
+
+    @staticmethod
     def _extract_response_text(response: Any) -> Optional[str]:
         if hasattr(response, "text") and response.text:
             return response.text
 
-        if hasattr(response, "parts") and response.parts:
-            full_response_text = ""
-            for part in response.parts:
-                if hasattr(part, "text") and part.text:
-                    full_response_text += part.text
-            if full_response_text:
-                return full_response_text
+        direct_parts_text = GeminiClient._extract_text_from_parts(getattr(response, "parts", None))
+        if direct_parts_text:
+            return direct_parts_text
 
-        if hasattr(response, "candidates") and response.candidates:
-            for candidate in response.candidates:
-                if hasattr(candidate, "content") and candidate.content and hasattr(candidate.content, "parts"):
-                    candidate_text = ""
-                    for part in candidate.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            candidate_text += part.text
-                    if candidate_text:
-                        return candidate_text
-
-        return None
+        return GeminiClient._extract_text_from_candidates(getattr(response, "candidates", None))
 
     def _raise_quota_exception(self, model_name: str, original_error: Exception) -> None:
         display_name = model_name.replace("models/", "")
