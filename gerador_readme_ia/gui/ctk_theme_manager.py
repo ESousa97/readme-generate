@@ -3,8 +3,12 @@
 Theme Manager para CustomTkinter com estilo Windows 11
 """
 
+import logging
+
 import customtkinter as ctk
 import darkdetect
+
+logger = logging.getLogger(__name__)
 
 # Paleta de cores Windows 11
 WINDOWS_11_COLORS = {
@@ -267,7 +271,7 @@ class Windows11ThemeManager:
         try:
             ctk.deactivate_automatic_dpi_awareness()
         except Exception:
-            pass
+            logger.debug("Falha ao desativar DPI awareness automático.", exc_info=True)
     
     def switch_theme(self, theme_name: str = None):
         """Alterna entre temas"""

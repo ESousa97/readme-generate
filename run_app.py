@@ -46,7 +46,7 @@ def setup_customtkinter():
         try:
             ctk.deactivate_automatic_dpi_awareness()
         except Exception:
-            pass  # Ignorar se não disponível
+            logger.debug("DPI awareness automático indisponível neste ambiente.", exc_info=True)
         
         logger.info("CustomTkinter configurado com sucesso")
         
@@ -88,7 +88,7 @@ pip install -r requirements.txt
             messagebox.showerror("Dependências Faltando", error_msg)
             root.destroy()
         except Exception:
-            pass
+            logger.debug("Falha ao exibir popup de dependências faltando.", exc_info=True)
         
         sys.exit(1)
 

@@ -55,7 +55,7 @@ class ReadmeGeneratorApp(ctk.CTk):
             if icon_path.exists():
                 self.iconbitmap(str(icon_path))
         except Exception:
-            pass
+            logger.debug("Não foi possível configurar ícone da aplicação.", exc_info=True)
 
         # Estado da aplicação
         self.config_mgr = ConfigManager()
@@ -312,24 +312,15 @@ class ReadmeGeneratorApp(ctk.CTk):
         # Toolbar do preview
         toolbar = ctk.CTkFrame(parent, height=50)
         toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=(5, 0))
-        toolbar.grid_columnconfigure(2, weight=1)
+        toolbar.grid_columnconfigure(1, weight=1)
         
         # Modo de visualização
-        view_label = ctk.CTkLabel(toolbar, text="Modo:", font=ctk.CTkFont(size=11))
+        view_label = ctk.CTkLabel(toolbar, text="Modo: Preview", font=ctk.CTkFont(size=11))
         view_label.grid(row=0, column=0, padx=10, pady=12)
-        
-        self.view_mode = ctk.CTkSegmentedButton(
-            toolbar,
-            values=["Preview", "Código", "Lado a Lado"],
-            command=self._change_view_mode,
-            width=250
-        )
-        self.view_mode.set("Preview")
-        self.view_mode.grid(row=0, column=1, padx=5, pady=12)
         
         # Botões de ação
         actions_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
-        actions_frame.grid(row=0, column=3, padx=10, pady=8, sticky="e")
+        actions_frame.grid(row=0, column=2, padx=10, pady=8, sticky="e")
         
         copy_btn = ModernButton(
             actions_frame,
@@ -358,16 +349,9 @@ class ReadmeGeneratorApp(ctk.CTk):
         
         # Preview renderizado
         self.readme_preview = ModernTextWidget(self.preview_container, wrap="word")
-        self.readme_preview.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=5)
-        
-        # Editor de código
-        self.code_editor = ModernTextWidget(
-            self.preview_container, 
-            wrap="none",
-            font_family=theme_manager.get_mono_font_family()
-        )
-        self.code_editor.grid(row=0, column=1, sticky="nsew", padx=(2, 5), pady=5)
-        self.code_editor.grid_remove()  # Inicialmente oculto
+        self.readme_preview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self.preview_container.grid_columnconfigure(0, weight=1)
+        self.preview_container.grid_columnconfigure(1, weight=0)
 
     def _create_settings_tab(self, parent):
         """Tab de configurações avançadas"""
@@ -547,23 +531,6 @@ class ReadmeGeneratorApp(ctk.CTk):
         # Força um refresh da interface
         self.update()
 
-    def _change_view_mode(self, mode):
-        """Altera o modo de visualização do preview"""
-        if mode == "Preview":
-            self.readme_preview.grid()
-            self.code_editor.grid_remove()
-            self.preview_container.grid_columnconfigure(0, weight=1)
-            self.preview_container.grid_columnconfigure(1, weight=0)
-        elif mode == "Código":
-            self.readme_preview.grid_remove()
-            self.code_editor.grid()
-            self.preview_container.grid_columnconfigure(0, weight=0)
-            self.preview_container.grid_columnconfigure(1, weight=1)
-        elif mode == "Lado a Lado":
-            self.readme_preview.grid()
-            self.code_editor.grid()
-            self.preview_container.grid_columnconfigure((0, 1), weight=1)
-
     def _toggle_custom_prompt(self):
         """Ativa/desativa o prompt personalizado"""
         if self.custom_prompt_enabled.get():
@@ -687,7 +654,6 @@ class ReadmeGeneratorApp(ctk.CTk):
         
         self.generated_readme = readme_text
         self.readme_preview.set_content(readme_text)
-        self.code_editor.set_content(readme_text)
         self.save_readme_btn.configure(state="normal")
         self.tabview.set("README Gerado")
         self.console.append_step("README", "success", "Gerado com sucesso")
@@ -721,7 +687,7 @@ class ReadmeGeneratorApp(ctk.CTk):
         file_path = filedialog.asksaveasfilename(
             title="Salvar README",
             defaultextension=".md",
-            initialname=default_name,
+            initialfile=default_name,
             filetypes=[("Markdown", "*.md"), ("Todos os arquivos", "*.*")]
         )
         
@@ -946,7 +912,7 @@ class ReadmeGeneratorApp(ctk.CTk):
             try:
                 self.gemini_client.close()
             except Exception:
-                pass
+                logger.debug("Erro ao fechar cliente Gemini durante encerramento.", exc_info=True)
         
         self.destroy()
 
