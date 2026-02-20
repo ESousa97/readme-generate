@@ -3,6 +3,13 @@ description: Sugestão de melhoria funcional
 title: "feat: "
 labels: ["enhancement", "triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Repositório arquivado
+        Este projeto foi arquivado e permanece público apenas para fins de estudo.
+        Não há garantia de resposta, revisão, correção ou manutenção.
+
   - type: textarea
     id: problem
     attributes:

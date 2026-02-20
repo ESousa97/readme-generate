@@ -1,5 +1,11 @@
 # Security Policy
 
+## Repository status
+
+This repository is archived and no longer actively maintained.
+It remains public for study purposes only.
+There is no guarantee of response, review, fix, or patch releases.
+
 ## Supported Versions
 
 | Version | Supported |
@@ -17,9 +23,7 @@ Do not open public issues for security vulnerabilities.
 
 ## Response SLA
 
-- Initial acknowledgment: up to 72 hours
-- Triage and severity definition: up to 7 business days
-- Mitigation/release timeline: based on severity and reproducibility
+- No guaranteed SLA for acknowledgment, triage, or mitigation.
 
 ## Disclosure Policy
 

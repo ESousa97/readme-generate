@@ -1,5 +1,10 @@
 # Contributing Guide
 
+## Repository status
+This repository is archived and no longer actively maintained.
+It remains public for study purposes only.
+There is no guarantee of response, review, merge, fix, or support.
+
 ## Development setup
 1. Use Python 3.11+.
 2. Create and activate a virtual environment.

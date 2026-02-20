@@ -6,6 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
+        ## Repositório arquivado
+        Este projeto foi arquivado e permanece público apenas para fins de estudo.
+        Não há garantia de resposta, revisão, correção ou manutenção.
+
         Obrigado por reportar. Preencha os campos com o máximo de detalhe para acelerar a análise.
   - type: textarea
     id: description

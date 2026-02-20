@@ -6,6 +6,17 @@ O formato é baseado em Keep a Changelog e este projeto segue Semantic Versionin
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-02-19
+### Changed
+- Repositório marcado como arquivado para fins de estudo.
+- Documentos de governança atualizados para explicitar ausência de manutenção ativa e de garantia de resposta/revisão/correção.
+- `CODE_OF_CONDUCT.md` atualizado com aviso explícito de arquivamento e ausência de garantia de suporte.
+- Templates de issue e PR atualizados com aviso visível de arquivamento.
+- Configuração de issues ajustada para destacar aviso/link de projeto arquivado.
+
+### Security
+- Dependabot configurado para não abrir novos PRs automaticamente.
+
 ## [1.1.0] - 2026-02-19
 ### Added
 - Toolchain de qualidade com `ruff`, `pytest`, `pytest-cov` e `pip-audit`.

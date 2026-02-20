@@ -1,3 +1,7 @@
+## Repositório arquivado
+- Este projeto foi arquivado e permanece público apenas para fins de estudo.
+- Não há garantia de resposta, revisão, merge, correção ou manutenção.
+
 ## Summary
 - descreva o objetivo e a motivação do PR
 

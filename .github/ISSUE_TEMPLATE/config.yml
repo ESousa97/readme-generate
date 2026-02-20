@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Projeto arquivado (somente estudo)
+    url: https://github.com/enoquesousa/readme-generate/blob/main/ARCHIVED.md
+    about: Este repositório não está mais ativo e não há garantia de resposta, revisão ou correção.
   - name: Security report
     url: https://github.com/enoquesousa/readme-generate/security/advisories/new
     about: Use este canal para reportar vulnerabilidades de segurança.
