@@ -30,7 +30,7 @@ jobs:
         run: python -m compileall gerador_readme_ia run_app.py
       - name: Upload coverage
         if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage
           path: coverage.xml
