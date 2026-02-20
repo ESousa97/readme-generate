@@ -1,14 +1,23 @@
 # gerador_readme_ia/config_manager.py
 import configparser
-import os
-from appdirs import user_config_dir
 import logging
+import os
 from typing import Optional
 
+from appdirs import user_config_dir
+
 from .constants import (
-    APP_NAME, APP_AUTHOR, CONFIG_FILE_NAME,
-    CONFIG_SECTION_API, CONFIG_KEY_API_KEY, CONFIG_KEY_MODEL, DEFAULT_GEMINI_MODEL
+    APP_AUTHOR,
+    APP_NAME,
+    CONFIG_FILE_NAME,
+    CONFIG_KEY_API_KEY,
+    CONFIG_KEY_MODEL,
+    CONFIG_SECTION_API,
+    DEFAULT_GEMINI_MODEL,
 )
+
+ENV_GEMINI_API_KEY = "GEMINI_API_KEY"
+ENV_GEMINI_MODEL = "GEMINI_MODEL"
 
 logger = logging.getLogger(f"{APP_NAME}.config_manager")
 
@@ -64,6 +73,10 @@ class ConfigManager:
 
     def get_api_key(self) -> Optional[str]:
         """Obtém a API Key salva"""
+        env_api_key = os.getenv(ENV_GEMINI_API_KEY)
+        if env_api_key and env_api_key.strip():
+            return env_api_key.strip()
+
         try:
             api_key = self.config.get(CONFIG_SECTION_API, CONFIG_KEY_API_KEY, fallback=None)
             if api_key and api_key.strip():
@@ -89,6 +102,10 @@ class ConfigManager:
 
     def get_gemini_model(self) -> str:
         """Obtém o modelo Gemini configurado"""
+        env_model = os.getenv(ENV_GEMINI_MODEL)
+        if env_model and env_model.strip():
+            return env_model.strip()
+
         try:
             model = self.config.get(CONFIG_SECTION_API, CONFIG_KEY_MODEL, fallback=DEFAULT_GEMINI_MODEL)
             return model if model and model.strip() else DEFAULT_GEMINI_MODEL

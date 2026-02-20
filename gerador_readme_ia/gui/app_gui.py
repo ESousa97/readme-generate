@@ -5,29 +5,34 @@ Interface principal modernizada com CustomTkinter estilo Windows 11
 from __future__ import annotations
 
 import os
-import sys
-import logging
 import threading
 import tkinter as tk
 from pathlib import Path
-from typing import Dict, Optional, Callable
 from tkinter import filedialog, messagebox
+from typing import Dict, Optional
 
 import customtkinter as ctk
-import darkdetect
 import google.generativeai as genai
 
-from ..constants import APP_NAME, APP_VERSION, APP_DISPLAY_NAME, DEFAULT_GEMINI_MODEL
 from ..config_manager import ConfigManager
+from ..constants import APP_DISPLAY_NAME, APP_NAME, APP_VERSION, DEFAULT_GEMINI_MODEL
 from ..ia_client.gemini_client import GeminiClient, QuotaExceededException
 from ..logger_setup import setup_logging
-
 from .ctk_theme_manager import theme_manager
-from .ctk_widgets import *
+from .ctk_widgets import (
+    APIKeyDialog,
+    ConsoleWidget,
+    ModelSelectionDialog,
+    ModernButton,
+    ModernFrame,
+    ModernSection,
+    ModernTextWidget,
+    QuotaExceededDialog,
+)
 from .logic import (
     build_prompt,
-    extract_project_data_from_zip,
     clean_readme_content,
+    extract_project_data_from_zip,
 )
 
 logger = setup_logging(f"{APP_NAME}.gui", debug=False)
@@ -49,7 +54,7 @@ class ReadmeGeneratorApp(ctk.CTk):
             icon_path = Path(__file__).parent.parent / "assets" / "icon.ico"
             if icon_path.exists():
                 self.iconbitmap(str(icon_path))
-        except:
+        except Exception:
             pass
 
         # Estado da aplicação
@@ -659,10 +664,10 @@ class ReadmeGeneratorApp(ctk.CTk):
             # Sucesso
             self.after(0, lambda: self._generation_success(readme))
             
-        except QuotaExceededException as e:
-            self.after(0, lambda: self._generation_quota_error(e))
-        except Exception as e:
-            self.after(0, lambda: self._generation_error(str(e)))
+        except QuotaExceededException as error:
+            self.after(0, lambda err=error: self._generation_quota_error(err))
+        except Exception as error:
+            self.after(0, lambda err=error: self._generation_error(str(err)))
 
     def _update_progress(self, message: str, value: int):
         """Atualiza a barra de progresso"""
@@ -790,7 +795,7 @@ class ReadmeGeneratorApp(ctk.CTk):
             
             if test_model:
                 model = genai.GenerativeModel(test_model)
-                response = model.generate_content(
+                model.generate_content(
                     "Test",
                     generation_config=genai.types.GenerationConfig(max_output_tokens=5)
                 )
@@ -940,7 +945,7 @@ class ReadmeGeneratorApp(ctk.CTk):
         if self.gemini_client:
             try:
                 self.gemini_client.close()
-            except:
+            except Exception:
                 pass
         
         self.destroy()

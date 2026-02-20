@@ -1,23 +1,56 @@
-# Python
+# Bytecode / cache
 __pycache__/
 *.py[cod]
 *.pyo
-*.log
+*.pyd
+*.so
 
-# PyInstaller
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / packaging artifacts
 build/
 dist/
 *.spec
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
 
-# Virtual env
-.venv/
-env/
-venv/
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
 
-# IDEs
-.vscode/
+# Test and coverage outputs
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+
+# Local app settings and generated files
+settings_readme_generator.ini
+
+# IDE / editor files
 .idea/
+.vscode/settings.json
+*.code-workspace
 
-# Sistema operacional
+# OS files
 .DS_Store
 Thumbs.db
+
+# Internal transformation documents
+BASELINE.md
+FINAL.md

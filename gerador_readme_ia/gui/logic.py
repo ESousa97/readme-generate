@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import os
 import zipfile
-from typing import Dict, List, Callable, Optional
+from typing import Callable, Dict, List, Optional
 
 from ..constants import PROMPTS
 
 PROMPT_README_GENERATION = PROMPTS["profissional"]  # fallback
+DEFAULT_MAX_FILES = 30
+DEFAULT_MAX_FILE_SIZE_KB = 5
+MAX_BINARY_NULL_THRESHOLD = 1
+
+
+def _is_safe_member_path(member_name: str) -> bool:
+    normalized = member_name.replace("\\", "/")
+    return not (normalized.startswith("/") or ".." in normalized.split("/"))
+
+
+def _is_probably_binary(content: bytes) -> bool:
+    if not content:
+        return False
+    return content.count(b"\x00") >= MAX_BINARY_NULL_THRESHOLD
 
 # ------------------------------------------------------------------
 # BUILD PROMPT ------------------------------------------------------
@@ -24,9 +38,12 @@ def build_prompt(project_data: str, config: Dict[str, object]) -> str:
 
     # acrescenta flags simples
     extras: List[str] = []
-    if config.get("include_badges"):   extras.append("Inclua badges informativos.")
-    if config.get("include_toc"):      extras.append("Inclua índice (Table of Contents).")
-    if config.get("include_examples"): extras.append("Inclua exemplos de uso.")
+    if config.get("include_badges"):
+        extras.append("Inclua badges informativos.")
+    if config.get("include_toc"):
+        extras.append("Inclua índice (Table of Contents).")
+    if config.get("include_examples"):
+        extras.append("Inclua exemplos de uso.")
     extras_txt = " " + " ".join(extras) if extras else ""
 
     return base.format(project_data=project_data) + extras_txt
@@ -44,20 +61,18 @@ def extract_project_data_from_zip(
     """Extrai nomes de arquivos e primeiros bytes de cada arquivo relevante.
     Mantém implementação simples para evitar travar interface.
     
-    CORRIGIDO: Progress callbacks agora funcionam corretamente
+    Segurança: ignora paths suspeitos e arquivos binários para evitar ruído e riscos.
     """
     if not os.path.isfile(zip_path):
         raise FileNotFoundError(zip_path)
 
     def emit_progress(msg: str, val: int):
-        if progress_cb: 
+        if progress_cb:
             progress_cb(msg, val)
-            print(f"[DEBUG] Progress: {msg} - {val}%")  # Debug temporário
 
     def emit_step(name: str, status: str, details: str = ""):
-        if step_cb: 
+        if step_cb:
             step_cb(name, status, details)
-            print(f"[DEBUG] Step: {name} - {status} - {details}")  # Debug temporário
 
     emit_step("ZIP", "progress", "Abrindo arquivo…")
     emit_progress("Iniciando análise do arquivo ZIP", 5)
@@ -68,8 +83,8 @@ def extract_project_data_from_zip(
         with zipfile.ZipFile(zip_path, "r") as zf:
             members = zf.infolist()
             total = len(members)
-            max_files = config.get("max_files", 30)
-            max_size = int(config.get("max_file_size_kb", 5)) * 1024
+            max_files = int(config.get("max_files", DEFAULT_MAX_FILES))
+            max_size = int(config.get("max_file_size_kb", DEFAULT_MAX_FILE_SIZE_KB)) * 1024
 
             emit_progress(f"Encontrados {total} arquivos no ZIP", 10)
             emit_step("Análise", "progress", f"{total} arquivos encontrados")
@@ -77,6 +92,10 @@ def extract_project_data_from_zip(
             # Processar arquivos
             files_to_process = min(total, max_files)
             for idx, info in enumerate(members[:max_files]):
+
+                if not _is_safe_member_path(info.filename):
+                    emit_step("Segurança", "warning", f"Path ignorado: {info.filename}")
+                    continue
                 
                 # Calcular progresso (10% a 80% da operação)
                 progress_percent = int(10 + (70 * (idx + 1) / files_to_process))
@@ -88,6 +107,8 @@ def extract_project_data_from_zip(
                 try:
                     with zf.open(info) as fp:
                         raw = fp.read(max_size)
+                        if _is_probably_binary(raw):
+                            continue
                         try:
                             text = raw.decode("utf-8")
                         except UnicodeDecodeError:

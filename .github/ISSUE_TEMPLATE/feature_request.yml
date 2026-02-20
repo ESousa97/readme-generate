@@ -1,0 +1,33 @@
+name: Feature Request
+description: Sugestão de melhoria funcional
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema a resolver
+      description: Qual dor atual esta feature resolve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposta de solução
+      description: Descreva a solução sugerida de forma objetiva.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Liste alternativas e trade-offs.
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Há impacto de compatibilidade?
+      options:
+        - Não
+        - Sim
+    validations:
+      required: true

@@ -2,18 +2,18 @@
 """Módulo GUI modernizado com CustomTkinter para o Gerador de README IA"""
 
 from .app_gui import ReadmeGeneratorApp
-from .ctk_theme_manager import theme_manager, Windows11ThemeManager
+from .ctk_theme_manager import Windows11ThemeManager, theme_manager
 from .ctk_widgets import (
-    ModernFrame,
+    APIKeyDialog,
+    ConsoleWidget,
+    InfoCard,
+    ModelSelectionDialog,
     ModernButton,
+    ModernFrame,
     ModernSection,
     ModernTextWidget,
-    ConsoleWidget,
-    APIKeyDialog,
-    ModelSelectionDialog,
-    QuotaExceededDialog,
     ProgressDialog,
-    InfoCard
+    QuotaExceededDialog,
 )
 
 __all__ = [

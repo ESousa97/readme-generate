@@ -2,9 +2,13 @@
 """
 Ponto de entrada da aplicação modernizada com CustomTkinter
 """
-import sys
 import os
+import sys
 import traceback
+from importlib import util
+from tkinter import messagebox
+
+import customtkinter as ctk
 
 # Adicionar diretório raiz ao path
 PROJECT_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -12,11 +16,11 @@ if PROJECT_ROOT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_ROOT_DIR)
 
 try:
-    from gerador_readme_ia.constants import APP_NAME, APP_AUTHOR, APP_VERSION, APP_DISPLAY_NAME
+    from gerador_readme_ia.constants import APP_AUTHOR, APP_DISPLAY_NAME, APP_NAME, APP_VERSION
     from gerador_readme_ia.gui.app_gui import ReadmeGeneratorApp
     from gerador_readme_ia.logger_setup import setup_logging
 except ModuleNotFoundError as e:
-    print(f"Erro Crítico: Não foi possível encontrar os módulos do projeto 'gerador_readme_ia'.")
+    print("Erro Crítico: Não foi possível encontrar os módulos do projeto 'gerador_readme_ia'.")
     print(f"Detalhes: {e}")
     print(f"Verifique se você está executando 'run_app.py' do diretório raiz do projeto ('{PROJECT_ROOT_DIR}')")
     print("e se a pasta 'gerador_readme_ia' existe e contém os arquivos necessários.")
@@ -24,11 +28,12 @@ except ModuleNotFoundError as e:
     input("Pressione Enter para sair...")
     sys.exit(1)
 
-import customtkinter as ctk
-from tkinter import messagebox
-
 # Configurar logger
-logger = setup_logging(f"{APP_NAME}.runner", app_author=APP_AUTHOR, debug=True)
+logger = setup_logging(
+    f"{APP_NAME}.runner",
+    app_author=APP_AUTHOR,
+    debug=os.getenv("APP_DEBUG", "false").lower() == "true",
+)
 
 def setup_customtkinter():
     """Configura CustomTkinter para melhor aparência"""
@@ -40,7 +45,7 @@ def setup_customtkinter():
         # Configurar DPI scaling
         try:
             ctk.deactivate_automatic_dpi_awareness()
-        except:
+        except Exception:
             pass  # Ignorar se não disponível
         
         logger.info("CustomTkinter configurado com sucesso")
@@ -51,25 +56,17 @@ def setup_customtkinter():
 def check_dependencies():
     """Verifica dependências essenciais"""
     missing_deps = []
-    
-    try:
-        import customtkinter
-    except ImportError:
+
+    if util.find_spec("customtkinter") is None:
         missing_deps.append("customtkinter")
-    
-    try:
-        import google.generativeai
-    except ImportError:
+
+    if util.find_spec("google.generativeai") is None:
         missing_deps.append("google-generativeai")
-    
-    try:
-        import markdown
-    except ImportError:
+
+    if util.find_spec("markdown") is None:
         missing_deps.append("markdown")
-    
-    try:
-        import darkdetect
-    except ImportError:
+
+    if util.find_spec("darkdetect") is None:
         missing_deps.append("darkdetect")
     
     if missing_deps:
@@ -90,7 +87,7 @@ pip install -r requirements.txt
             root.withdraw()  # Ocultar janela principal
             messagebox.showerror("Dependências Faltando", error_msg)
             root.destroy()
-        except:
+        except Exception:
             pass
         
         sys.exit(1)
@@ -136,7 +133,7 @@ Por favor, reporte este erro com as informações acima.
             root.withdraw()
             messagebox.showerror(f"Erro Crítico - {APP_DISPLAY_NAME}", error_msg)
             root.destroy()
-        except:
+        except Exception:
             # Se falhar, mostrar no console
             print(error_msg)
         

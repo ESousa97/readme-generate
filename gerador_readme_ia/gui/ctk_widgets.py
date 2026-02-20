@@ -3,11 +3,10 @@
 Widgets customizados para interface moderna com CustomTkinter
 """
 import tkinter as tk
-from tkinter import messagebox, simpledialog
-from typing import Optional, Callable, List
-import customtkinter as ctk
 from datetime import datetime
-import re
+from typing import Callable, List
+
+import customtkinter as ctk
 
 from .ctk_theme_manager import theme_manager
 
@@ -163,14 +162,6 @@ class ConsoleWidget(ctk.CTkTextbox):
     def append_step(self, step_name: str, status: str = "info", details: str = ""):
         """Adiciona um step ao console"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        
-        status_colors = {
-            "info": theme_manager.get_color("info"),
-            "success": theme_manager.get_color("success"),
-            "warning": theme_manager.get_color("warning"),
-            "error": theme_manager.get_color("error"),
-            "progress": theme_manager.get_color("text_secondary")
-        }
         
         status_symbols = {
             "info": "[INFO]",

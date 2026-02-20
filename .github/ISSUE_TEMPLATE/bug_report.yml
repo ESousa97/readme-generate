@@ -1,0 +1,47 @@
+name: Bug Report
+description: Reporte um problema reproduzível no projeto
+title: "fix: [BUG] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar. Preencha os campos com o máximo de detalhe para acelerar a análise.
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrição do problema
+      description: O que está acontecendo e o que deveria acontecer?
+      placeholder: Descreva o comportamento atual e o esperado.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Sistema operacional
+      placeholder: Windows 11 / Ubuntu 24.04 / macOS Sonoma
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Versão do Python
+      placeholder: 3.12.1
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs e stack trace
+      description: Cole os logs relevantes sem dados sensíveis.
+      render: shell

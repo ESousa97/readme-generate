@@ -1,11 +1,12 @@
 # gerador_readme_ia/logger_setup.py
 import logging
+import os
 import sys
 import traceback
 from logging.handlers import RotatingFileHandler
-import os
-from appdirs import user_log_dir
 from typing import Optional
+
+from appdirs import user_log_dir
 
 LOG_FILE_NAME_DEFAULT = "app.log"
 DEFAULT_APP_AUTHOR = "Enoquesousa"  # Valor padrão direto para evitar importação circular

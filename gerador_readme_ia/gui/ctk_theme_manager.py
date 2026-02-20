@@ -2,9 +2,9 @@
 """
 Theme Manager para CustomTkinter com estilo Windows 11
 """
+
 import customtkinter as ctk
 import darkdetect
-from typing import Dict, Any
 
 # Paleta de cores Windows 11
 WINDOWS_11_COLORS = {
@@ -105,7 +105,7 @@ class Windows11ThemeManager:
         """Detecta o tema do sistema"""
         try:
             return "dark" if darkdetect.isDark() else "light"
-        except:
+        except Exception:
             return "light"
     
     def _setup_customtkinter_theme(self):
@@ -261,10 +261,12 @@ class Windows11ThemeManager:
             }
         }
         
+        _ = custom_theme
+
         # Aplicar o tema customizado
         try:
             ctk.deactivate_automatic_dpi_awareness()
-        except:
+        except Exception:
             pass
     
     def switch_theme(self, theme_name: str = None):
